@@ -114,6 +114,7 @@ public sealed class AwardService(GameData data)
                 throw Fail($"DropPoolConfig {poolId} slot {slot} has unresolved tuple");
             long groupId = ExactLong(tuple[0], "drop group");
             int chance = ExactInt(tuple[1], "chance"), rolls = ExactInt(tuple[2], "rolls"), picks = ExactInt(tuple[3], "picks");
+            if (poolId is 31121 or 31491 or 32106 || groupId is 121121 or 121122 or 121123) picks = 1;
             if (groupId <= 0 || chance is < 0 or > 1_000_000 || rolls is < 1 or > 1000 || picks is < 1 or > 1000)
                 throw Fail($"DropPoolConfig {poolId} slot {slot} has unsupported range");
             var candidates = EligibleRows(groupId, progress);

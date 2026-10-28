@@ -94,8 +94,7 @@ public sealed partial class CharacterService
     /// </summary>
     public long WithPursueBonus(int level, long baseExp)
     {
-        if (baseExp <= 0) return baseExp;
-        long percent = PursueExpPercent(level, ServerLevel());
-        return percent <= 0 ? baseExp : checked(baseExp + baseExp * percent / 10000);
+        // Konsor RO3: Keep base rates 1x without the artificial +400% pursue catch-up explosion
+        return baseExp;
     }
 }
