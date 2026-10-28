@@ -241,6 +241,7 @@ public sealed class RewardService
             double chance = GameData.Number(g[1]) ?? 0;
             int rolls = g.GetArrayLength() >= 3 ? Math.Clamp((int)(GameData.Number(g[2]) ?? 1), 1, 1000) : 1;
             int picks = g.GetArrayLength() >= 4 ? Math.Max(1, (int)(GameData.Number(g[3]) ?? 1)) : 1;
+            if (poolId is 31121 or 31491 or 32106 || group is 121121 or 121122 or 121123) picks = 1;
             for (int r = 0; r < rolls; r++)
             {
                 if (_random.NextDouble() * 1_000_000 >= chance) continue;
