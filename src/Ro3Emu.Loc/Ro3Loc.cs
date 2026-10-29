@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -74,26 +74,68 @@ namespace Ro3Emu.Loc
                 using (var stream = typeof(Ro3Loc).Assembly.GetManifestResourceStream("en_overrides.tsv"))
                 using (var reader = stream == null ? null : new StreamReader(stream, Encoding.UTF8))
                 {
-                    string line;
-                    while (reader != null && (line = reader.ReadLine()) != null)
+                    ReadOverrides(reader, map);
+                }
+            }
+            catch
+            {
+                // no embedded overrides
+            }
+            try
+            {
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "ro3emu");
+                string file = Path.Combine(dir, "en_overrides.tsv");
+                if (File.Exists(file))
+                {
+                    using (var reader = new StreamReader(file, Encoding.UTF8))
                     {
-                        int tab = line.IndexOf('\t');
-                        if (line.Length == 0 || line[0] == '#' || tab <= 0) continue;
-                        map[Unescape(line.Substring(0, tab)).TrimStart('﻿')] = Unescape(line.Substring(tab + 1));
+                        ReadOverrides(reader, map);
                     }
                 }
             }
             catch
             {
-                // no overrides
+                // no disk overrides
             }
             return map;
+        }
+
+        private static string StripBom(string s)
+        {
+            if (s != null && s.Length > 0 && (s[0] == '\uFEFF' || s[0] == '\uFFFE'))
+                return s.Substring(1);
+            return s;
+        }
+
+        private static void ReadOverrides(TextReader reader, Dictionary<string, string> map)
+        {
+            if (reader == null) return;
+            string line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                int tab = line.IndexOf('\t');
+                if (line.Length == 0 || line[0] == '#' || tab <= 0) continue;
+                map[StripBom(Unescape(line.Substring(0, tab)))] = Unescape(line.Substring(tab + 1));
+            }
         }
 
         private static string MapFrom(string text, int hook)
         {
             if (text == null || text.Length == 0) return text;
-            if (EnglishOverrides.Count != 0 && EnglishOverrides.TryGetValue(text, out var replaced)) return replaced;
+            if (EnglishOverrides.Count != 0)
+            {
+                if (EnglishOverrides.TryGetValue(text, out var replaced)) return replaced;
+                if (text.Length > 0 && text[0] == '[')
+                {
+                    foreach (var kvp in EnglishOverrides)
+                    {
+                        if (kvp.Key.Length > 1 && kvp.Key[0] == '[' && text.StartsWith(kvp.Key, StringComparison.Ordinal))
+                        {
+                            return kvp.Value + text.Substring(kvp.Key.Length);
+                        }
+                    }
+                }
+            }
             if (!HasCjk(text)) return text;
             try
             {
@@ -250,7 +292,7 @@ namespace Ro3Emu.Loc
                     if (line.Length == 0 || line[0] == '#') continue;
                     int tab = line.IndexOf('\t');
                     if (tab <= 0) continue;
-                    string zh = Unescape(line.Substring(0, tab)).TrimStart('\uFEFF');
+                    string zh = StripBom(Unescape(line.Substring(0, tab)));
                     string en = Unescape(line.Substring(tab + 1));
                     if (en.Length == 0) continue;
                     _map[zh] = en;
