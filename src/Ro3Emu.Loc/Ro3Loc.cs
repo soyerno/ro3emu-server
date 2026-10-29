@@ -66,11 +66,41 @@ namespace Ro3Emu.Loc
         /// <summary>English the client ships that we replace (en_overrides.tsv): exact strings, checked before the CJK fast path.</summary>
         private static readonly Dictionary<string, string> EnglishOverrides = LoadEnglishOverrides();
 
+        private static string ResolveRo3EmuDir()
+        {
+            try
+            {
+                string asmLocation = typeof(Ro3Loc).Assembly.Location;
+                if (!string.IsNullOrEmpty(asmLocation))
+                {
+                    string candidate = Path.Combine(Path.GetDirectoryName(asmLocation) ?? "", "..", "..", "ro3emu");
+                    if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
+                }
+            }
+            catch { }
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory ?? ".";
+                string candidate = Path.Combine(baseDir, "ro3emu");
+                if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
+            }
+            catch { }
+            try
+            {
+                string curDir = Directory.GetCurrentDirectory();
+                string candidate = Path.Combine(curDir, "ro3emu");
+                if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
+            }
+            catch { }
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "ro3emu");
+        }
+
         private static string GetConfiguredLanguage(string dir)
         {
             try
             {
                 string langFile = Path.Combine(dir, "language.txt");
+                if (!File.Exists(langFile) && Directory.Exists(Path.Combine(dir, ".."))) { string parentLang = Path.Combine(dir, "..", "language.txt"); if (File.Exists(parentLang)) langFile = parentLang; }
                 if (File.Exists(langFile))
                 {
                     string text = File.ReadAllText(langFile).Trim().ToLowerInvariant();
@@ -86,7 +116,7 @@ namespace Ro3Emu.Loc
         private static Dictionary<string, string> LoadEnglishOverrides()
         {
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "ro3emu");
+            string dir = ResolveRo3EmuDir();
             string lang = GetConfiguredLanguage(dir);
 
             if (lang == "en")
@@ -300,16 +330,18 @@ namespace Ro3Emu.Loc
             _templates = new List<Template>();
             try
             {
-                _dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "ro3emu");
-                using (var stream = typeof(Ro3Loc).Assembly.GetManifestResourceStream("loc_en.tsv"))
-                    if (stream != null) Read(new StreamReader(stream, Encoding.UTF8));
+                _dir = ResolveRo3EmuDir();
+                string lang = GetConfiguredLanguage(_dir);
+                if (lang != "en")
+                {
+                    using (var stream = typeof(Ro3Loc).Assembly.GetManifestResourceStream("loc_en.tsv"))
+                        if (stream != null) Read(new StreamReader(stream, Encoding.UTF8));
+                }
                 _sids = new Dictionary<long, string>();
                 using (var stream = typeof(Ro3Loc).Assembly.GetManifestResourceStream("loc_sids.tsv"))
                     if (stream != null) ReadSids(new StreamReader(stream, Encoding.UTF8));
-                string lang = GetConfiguredLanguage(_dir);
-                string overrides = lang == "en" && File.Exists(Path.Combine(_dir, "loc_en_us.tsv"))
-                    ? Path.Combine(_dir, "loc_en_us.tsv")
-                    : Path.Combine(_dir, "loc_en.tsv");
+
+                string overrides = Path.Combine(_dir, "loc_en.tsv");
                 if (File.Exists(overrides)) Read(new StreamReader(overrides, Encoding.UTF8));
             }
             catch
