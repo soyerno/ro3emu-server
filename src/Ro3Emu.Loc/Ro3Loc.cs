@@ -45,22 +45,25 @@ namespace Ro3Emu.Loc
         /// </summary>
         public static string Sid(string value, long sid)
         {
-            if (!string.IsNullOrEmpty(value) && value != "None" && !value.StartsWith("Not Find Key", StringComparison.Ordinal)) return value;
-            try
+            if (string.IsNullOrEmpty(value) || value == "None" || value.StartsWith("Not Find Key", StringComparison.Ordinal))
             {
-                string zh = null;
-                lock (Gate)
+                try
                 {
-                    if (_map == null) Load();
-                    if (_sids != null) _sids.TryGetValue(sid, out zh);
+                    string zh = null;
+                    lock (Gate)
+                    {
+                        if (_map == null) Load();
+                        if (_sids != null) _sids.TryGetValue(sid, out zh);
+                    }
+                    if (zh != null) return MapFrom(zh, 0);
                 }
-                if (zh != null) return MapFrom(zh, 0);
+                catch
+                {
+                    // keep the value the client resolved
+                }
+                return value;
             }
-            catch
-            {
-                // keep the value the client resolved
-            }
-            return value;
+            return MapFrom(value, 0);
         }
 
         /// <summary>English the client ships that we replace (en_overrides.tsv): exact strings, checked before the CJK fast path.</summary>

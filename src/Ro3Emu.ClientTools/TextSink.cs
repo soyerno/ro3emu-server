@@ -140,6 +140,18 @@ internal static class TextSink
         return $"text sink: LanguageMain.Get(sid) x{returns.Count} -> Ro3Loc.Sid";
     }
 
+    public static string PatchUiText(ModuleDefinition module, string locDll)
+    {
+        using var loc = AssemblyDefinition.ReadAssembly(locDll, new ReaderParameters { InMemory = true });
+        var map = module.ImportReference(Method(loc, "Map"));
+        var textType = module.GetType("UnityEngine.UI.Text");
+        if (textType == null) return "no UnityEngine.UI.Text";
+        var setter = textType.Methods.SingleOrDefault(m => m.Name == "set_text" && m.Parameters.Count == 1);
+        if (setter == null) return "no Text.set_text";
+        MapArgument(setter, setter.Parameters[0], map);
+        return "text sink: UnityEngine.UI.Text.set_text -> Ro3Loc";
+    }
+
     private static MethodDefinition Method(AssemblyDefinition loc, string name) =>
         loc.MainModule.GetType("Ro3Emu.Loc.Ro3Loc").Methods.Single(m => m.Name == name && m.Parameters.Count == 1);
 

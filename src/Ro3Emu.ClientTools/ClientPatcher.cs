@@ -119,7 +119,7 @@ public static class ClientPatcher
         "Unity.TextMeshPro.dll" => m => TextSink.PatchTmp(m, locDll, hooksDll),
         "HUD.dll" => m => TextSink.PatchHud(m, locDll),
         "HappyEngine.Resource.dll" => m => TextSink.PatchLauncher(m, locDll),
-        "UnityEngine.UI.dll" => m => ImageSwapPatch.Patch(m, hooksDll),
+        "UnityEngine.UI.dll" => m => ImageSwapPatch.Patch(m, hooksDll) + "; " + TextSink.PatchUiText(m, locDll),
         "UnityEngine.CoreModule.dll" => m => OpenUrlPatch.Patch(m, hooksDll),
         _ => null,
     };
