@@ -16,12 +16,13 @@
 - [Tests](guide/testing.md): content tests on your exported data, rule tests on the invented fixture that CI runs
 - [Config tables](guide/config-tables.md): the typed views of the client's tables and the startup check of the export
 - [Security model](systems/security.md): what the server exposes, what it trusts, and how to report a vulnerability
+- [Account bans](systems/account-bans.md): the `account_ban` table the admin panel writes and where the server checks it
 
 ## Systems: how each part is implemented
 
 | Area | Notes |
 |---|---|
-| Combat and skills | [skill protocol](systems/skill-protocol.md) · [buffs and resources](systems/skill-buffs.md) · [skill growth](systems/skill-growth.md) · [remaining skill messages](systems/skills-rest.md) · [totem effects](systems/totem-effects.md) |
+| Combat and skills | [monster AI](systems/monster-ai.md) · [skill protocol](systems/skill-protocol.md) · [buffs and resources](systems/skill-buffs.md) · [skill growth](systems/skill-growth.md) · [remaining skill messages](systems/skills-rest.md) · [totem effects](systems/totem-effects.md) |
 | Character and items | [Astral Level (Paragon)](systems/paragon.md) · [Starshatter ritual](systems/starshatter.md) · [title ranks](systems/titles.md) · [equipment affixes](systems/equipment-affixes.md) · [build presets](systems/genre.md) · [wardrobe](systems/wardrobe.md) · [mounts and totems](systems/mount-totem.md) |
 | Pets | [pets](systems/pet.md) · [ordinary guardian skills](systems/pet-guardian-skills.md) · [pets in the world](systems/pet-world-follow.md) · [tower companions and Bonus Time](systems/tower-pets-afk.md) |
 | Life jobs | [life jobs and production](systems/lifejob.md) · [gathering](systems/gathering.md) |
