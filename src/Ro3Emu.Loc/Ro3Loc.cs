@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -185,21 +185,137 @@ namespace Ro3Emu.Loc
             }
         }
 
+        private static int CountLeadingSpaces(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            int count = 0;
+            while (count < s.Length && char.IsWhiteSpace(s[count])) count++;
+            return count;
+        }
+
+        private static string TryTranslateTaggedOrPrefixed(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+
+            // Pattern 1: <color=...>[Prefix]</color> Remainder
+            // or <color=...>Prefix</color> Remainder
+            if (text.Length > 0 && text[0] == '<')
+            {
+                int closeTag1 = text.IndexOf('>');
+                if (closeTag1 > 0 && closeTag1 + 1 < text.Length)
+                {
+                    int nextOpen = text.IndexOf('<', closeTag1 + 1);
+                    if (nextOpen > closeTag1)
+                    {
+                        int closeTag2 = text.IndexOf('>', nextOpen + 1);
+                        if (closeTag2 > nextOpen)
+                        {
+                            string openTag = text.Substring(0, closeTag1 + 1);
+                            string innerTag = text.Substring(closeTag1 + 1, nextOpen - (closeTag1 + 1));
+                            string endTag = text.Substring(nextOpen, closeTag2 - nextOpen + 1);
+                            string rest = text.Substring(closeTag2 + 1);
+
+                            string innerTrimmed = innerTag.Trim();
+                            string translatedInner = null;
+
+                            if (EnglishOverrides.TryGetValue(innerTag, out var ti)) translatedInner = ti;
+                            else if (EnglishOverrides.TryGetValue(innerTrimmed, out ti)) translatedInner = ti;
+                            else if (HasCjk(innerTrimmed))
+                            {
+                                lock (Gate)
+                                {
+                                    if (_map == null) Load();
+                                    if (_map != null && _map.TryGetValue(innerTrimmed, out var zhInner))
+                                        translatedInner = zhInner;
+                                }
+                            }
+
+                            if (translatedInner != null)
+                            {
+                                string translatedRest = rest;
+                                string restTrimmed = rest.Trim();
+                                if (!string.IsNullOrEmpty(restTrimmed))
+                                {
+                                    if (EnglishOverrides.TryGetValue(restTrimmed, out var tr))
+                                    {
+                                        int spaces = CountLeadingSpaces(rest);
+                                        string prefix = spaces > 0 ? rest.Substring(0, spaces) : " ";
+                                        translatedRest = prefix + tr;
+                                    }
+                                    else if (HasCjk(restTrimmed))
+                                    {
+                                        lock (Gate)
+                                        {
+                                            if (_map == null) Load();
+                                            if (_map != null && _map.TryGetValue(restTrimmed, out var zhRest))
+                                            {
+                                                int spaces = CountLeadingSpaces(rest);
+                                                string prefix = spaces > 0 ? rest.Substring(0, spaces) : " ";
+                                                translatedRest = prefix + zhRest;
+                                            }
+                                        }
+                                    }
+                                }
+                                return openTag + translatedInner + endTag + translatedRest;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pattern 2: [Prefix] Remainder
+            if (text.Length > 0 && text[0] == '[')
+            {
+                foreach (var kvp in EnglishOverrides)
+                {
+                    if (kvp.Key.Length > 1 && kvp.Key[0] == '[' && text.StartsWith(kvp.Key, StringComparison.Ordinal))
+                    {
+                        string remainder = text.Substring(kvp.Key.Length);
+                        string trimmed = remainder.Trim();
+                        if (trimmed.Length > 0)
+                        {
+                            if (EnglishOverrides.TryGetValue(trimmed, out var remainderTrans))
+                            {
+                                int spaces = CountLeadingSpaces(remainder);
+                                string prefix = spaces > 0 ? remainder.Substring(0, spaces) : " ";
+                                return kvp.Value + prefix + remainderTrans;
+                            }
+                            if (HasCjk(trimmed))
+                            {
+                                lock (Gate)
+                                {
+                                    if (_map == null) Load();
+                                    if (_map != null && _map.TryGetValue(trimmed, out var zhRest))
+                                    {
+                                        int spaces = CountLeadingSpaces(remainder);
+                                        string prefix = spaces > 0 ? remainder.Substring(0, spaces) : " ";
+                                        return kvp.Value + prefix + zhRest;
+                                    }
+                                }
+                            }
+                        }
+                        return kvp.Value + remainder;
+                    }
+                }
+            }
+
+            return null;
+        }
+
         private static string MapFrom(string text, int hook)
         {
             if (text == null || text.Length == 0) return text;
             if (EnglishOverrides.Count != 0)
             {
                 if (EnglishOverrides.TryGetValue(text, out var replaced)) return replaced;
-                if (text.Length > 0 && text[0] == '[')
+
+                string tagged = TryTranslateTaggedOrPrefixed(text);
+                if (tagged != null) return tagged;
+
+                if (text.IndexOf('<') >= 0 || text.IndexOf('\n') >= 0)
                 {
-                    foreach (var kvp in EnglishOverrides)
-                    {
-                        if (kvp.Key.Length > 1 && kvp.Key[0] == '[' && text.StartsWith(kvp.Key, StringComparison.Ordinal))
-                        {
-                            return kvp.Value + text.Substring(kvp.Key.Length);
-                        }
-                    }
+                    string segmented = Segments(text);
+                    if (segmented != null) return segmented;
                 }
             }
             if (!HasCjk(text)) return text;
@@ -303,11 +419,31 @@ namespace Ro3Emu.Loc
                 {
                     string core = run.Trim();
                     string en = null;
-                    if (!_map.TryGetValue(core, out en)) en = MatchTemplate(core) ?? CjkRuns(core);
-                    if (en == null) return null;
-                    int lead = run.IndexOf(core, StringComparison.Ordinal);
-                    sb.Append(run, 0, lead).Append(en).Append(run, lead + core.Length, run.Length - lead - core.Length);
-                    any = true;
+                    if (_map != null && !_map.TryGetValue(core, out en)) en = MatchTemplate(core) ?? CjkRuns(core);
+                    if (en != null)
+                    {
+                        int lead = run.IndexOf(core, StringComparison.Ordinal);
+                        sb.Append(run, 0, lead).Append(en).Append(run, lead + core.Length, run.Length - lead - core.Length);
+                        any = true;
+                    }
+                    else
+                    {
+                        sb.Append(run);
+                    }
+                }
+                else if (EnglishOverrides.Count != 0)
+                {
+                    string core = run.Trim();
+                    if (core.Length > 0 && EnglishOverrides.TryGetValue(core, out var enOverride))
+                    {
+                        int lead = run.IndexOf(core, StringComparison.Ordinal);
+                        sb.Append(run, 0, lead).Append(enOverride).Append(run, lead + core.Length, run.Length - lead - core.Length);
+                        any = true;
+                    }
+                    else
+                    {
+                        sb.Append(run);
+                    }
                 }
                 else sb.Append(run);
                 i = end;
