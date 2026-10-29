@@ -118,7 +118,7 @@ namespace Ro3Emu.Loc
 
         private static Dictionary<string, string> LoadEnglishOverrides()
         {
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string dir = ResolveRo3EmuDir();
             string lang = GetConfiguredLanguage(dir);
 
@@ -308,6 +308,16 @@ namespace Ro3Emu.Loc
             if (EnglishOverrides.Count != 0)
             {
                 if (EnglishOverrides.TryGetValue(text, out var replaced)) return replaced;
+
+                string trimmed = text.Trim();
+                if (trimmed.Length != text.Length && EnglishOverrides.TryGetValue(trimmed, out replaced))
+                {
+                    int leading = CountLeadingSpaces(text);
+                    string prefix = leading > 0 ? text.Substring(0, leading) : "";
+                    int trailing = text.Length - trimmed.Length - leading;
+                    string suffix = trailing > 0 ? text.Substring(text.Length - trailing) : "";
+                    return prefix + replaced + suffix;
+                }
 
                 string tagged = TryTranslateTaggedOrPrefixed(text);
                 if (tagged != null) return tagged;
