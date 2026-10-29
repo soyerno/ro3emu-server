@@ -20,7 +20,7 @@ public static class ClientPatcher
     private const string ServerListPathAndQuery = ServerListPath + "?inline=true&force_refresh=true";
     private const string PemMarker = "-----BEGIN RSA PUBLIC KEY-----";
 
-    internal static readonly string[] PatchedFiles = ["Happyengine.Network.dll", "Assembly-CSharp.dll", "Phonest.Common.dll", "Happyengine.Base.Runtime.dll", "Unity.TextMeshPro.dll", "HUD.dll", "HappyEngine.Resource.dll", "UnityEngine.UI.dll"];
+    internal static readonly string[] PatchedFiles = ["Happyengine.Network.dll", "Assembly-CSharp.dll", "Phonest.Common.dll", "Happyengine.Base.Runtime.dll", "Unity.TextMeshPro.dll", "HUD.dll", "HappyEngine.Resource.dll", "UnityEngine.UI.dll", "UnityEngine.CoreModule.dll"];
 
     /// <summary>--verbose: GS_Debug.ShowLog always true, so the Lua debug logs (Lua_Debug reads it) reach Player.log.</summary>
     public static bool VerboseLogs { get; set; }
@@ -87,6 +87,7 @@ public static class ClientPatcher
                 "HUD.dll" => m => TextSink.PatchHud(m, locDll),
                 "HappyEngine.Resource.dll" => m => TextSink.PatchLauncher(m, locDll),
                 "UnityEngine.UI.dll" => m => ImageSwapPatch.Patch(m, hooksDll),
+                "UnityEngine.CoreModule.dll" => m => OpenUrlPatch.Patch(m, hooksDll),
                 _ => null,
             };
             RewriteStrings(clientDir, file, source, destination, rules, extra);
@@ -310,6 +311,12 @@ public static class ClientPatcher
                 catch (InvalidOperationException e) { problems.Add(e.Message); }
             }
             if (file == "Unity.TextMeshPro.dll" && assembly.MainModule.GetType("TMPro.TMP_Text") == null) problems.Add("TMPro.TMP_Text not found");
+            if (file == "UnityEngine.CoreModule.dll")
+            {
+                // In memory only: does the OpenURL redirect (and its call into the hooks DLL) fit this build.
+                try { OpenUrlPatch.Patch(assembly.MainModule, File.Exists(hooksDll) ? hooksDll : null); }
+                catch (InvalidOperationException e) { problems.Add(e.Message); }
+            }
         }
         problems.AddRange(rules.Where(r => r.Hits == 0).Select(r => "literal not found: " + r.Description));
 
