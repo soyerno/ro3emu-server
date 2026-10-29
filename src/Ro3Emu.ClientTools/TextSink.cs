@@ -68,7 +68,29 @@ internal static class TextSink
             patched++;
         }
         if (patched == 0) throw new InvalidOperationException("HUDTextHelper.SetWordCell(kName) not found");
-        return $"text sink: HUDTextHelper.SetWordCell x{patched} -> Ro3Loc";
+        // Overhead names/titles that reach the HUD mesh without SetWordCell (monster names stayed Chinese with the client
+        // in chinesesimplified): display-text strings of RoleHUDComponent / HUD_Helper setters, and MTextData.Context, the
+        // text each HUD label finally draws. Mapping twice is harmless (text without CJK is returned as is).
+        int extra = 0;
+        var textParams = new HashSet<string>(StringComparer.Ordinal)
+            { "kName", "name", "guildName", "titleName", "title", "guildPost", "postName", "chantString", "sps", "skillName", "text", "stallName", "value" };
+        foreach (var typeName in new[] { "RoleHUDComponent", "HUD_Helper", "MTextData" })
+        {
+            var type = module.GetType(typeName);
+            if (type == null) continue;
+            foreach (var method in type.Methods.Where(m => m.HasBody).ToList())
+            {
+                bool wanted = typeName == "MTextData" ? method.Name == "set_Context"
+                    : method.Name is "AttachToTarget" or "ShowRoleHUD" or "ShowNpcShopHUD" || method.Name.StartsWith("Set", StringComparison.Ordinal) || method.Name.StartsWith("HUDSet", StringComparison.Ordinal);
+                if (!wanted) continue;
+                foreach (var p in method.Parameters.Where(p => p.ParameterType.FullName == "System.String" && textParams.Contains(p.Name)).ToList())
+                {
+                    MapArgument(method, p, map);
+                    extra++;
+                }
+            }
+        }
+        return $"text sink: HUDTextHelper.SetWordCell x{patched} + {extra} HUD setter(s) -> Ro3Loc";
     }
 
     /// <summary>
