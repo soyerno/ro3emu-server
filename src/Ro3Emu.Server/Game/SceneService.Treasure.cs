@@ -1,12 +1,17 @@
 using Romsg;
+using Ro3Emu.Server.Data.Config;
 using Ro3Emu.Server.Maps;
 
 namespace Ro3Emu.Server.Game;
 
 public sealed partial class SceneService
 {
-    private const int TreasureInteraction = 4;
+    /// <summary>ActivityConstant.TreasureHuntingNPCID: the owner-only NPC standing on the hunt point.</summary>
     private const int TreasureNpcId = 21070002;
+    /// <summary>Custom data ScenePointId (Config/Define/Lua_CustomDataDefine.lua): LC_InteractCondition.CheckTreasureIsHunt
+    /// shows the NPC's interact button only while this equals SeasonTreasureHunt.iPointId, the 5064 pointId
+    /// (TreasureHuntMapPointConfig _iId). (inferred) The value is that _iId itself.</summary>
+    private const long ScenePointIdCustomData = 104;
     /// <summary>Treasure hunt NPC UIDs: 2^46 + role id, below 2^53 (the client keeps unit ids in a double array, see
     /// DungeonService.SceneActorUidBase).</summary>
     internal const long TreasureUidPrefix = 1L << 46;
@@ -37,8 +42,14 @@ public sealed partial class SceneService
         var npc = new WorldNpc(TreasureUid(session), target.Scene, WorldNpcKind.Npc, TreasureNpcId,
             data.TextOf(npcRow, "_iName"), (int)Data.GameData.Int(npcRow, "_iCamp"),
             target.Position.X, target.Position.Y, target.Position.Z, target.Position.Face, default);
+        var entity = NpcEntity(npc);
+        entity.CustomDatas.Add(new CustomData
+        {
+            Id = ScenePointIdCustomData,
+            CustomParam = new CustomParam { Tp = CustomParam.Types.ParamType.Long, LongParam = hunt.PointId },
+        });
         var view = new AoIViewChangeData();
-        view.Bases.Add(NpcEntity(npc));
+        view.Bases.Add(entity);
         await session.SendGameAsync(GameAoiSink.SyncAoiView, view);
     }
 
@@ -56,10 +67,13 @@ public sealed partial class SceneService
 
     internal bool HasTreasureMonster(long uid) => world.AllUnits().Any(u => u.Uid == uid && u is MonsterUnit { Dead: false });
 
-    /// <summary>Only the owner's dynamic UID takes this branch; static interaction id 4 keeps its normal route.</summary>
+    /// <summary>The dig. The client sends the NPC's NPCConfig _iInteractID entry as interaction_id (LC_InteractManager,
+    /// LC_DAL_Interact); ActivityConstant.TreasureHuntingInteractID is read by no client logic. Only the owner's dynamic
+    /// UID takes this branch, so the same interaction on a static NPC keeps its normal route.</summary>
     private async Task<bool> TryTreasureInteractAsync(GameSession session, NpcInteractionReq req)
     {
-        if (session.Role == null || req.InteractionId != TreasureInteraction || req.NpcUid != TreasureUid(session)) return false;
+        if (session.Role == null || req.NpcUid != TreasureUid(session)
+            || NPCConfig.Get(data, TreasureNpcId) is not { } npc || !npc.InteractId.Contains(req.InteractionId)) return false;
         var hunt = session.ActivityRuntime.AdventureTreasure;
         int result = hunt.PointId == 0 || TreasurePoint(hunt.PointId) is not { } target
             ? ErrorCodes.NpcMissing

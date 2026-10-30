@@ -72,6 +72,10 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
         return parser.ParseFrom(packet.Body);
     }
 
+    /// <summary>The interaction the client sends for the hunt NPC: NPCConfig 21070002 _iInteractID (LC_InteractManager).</summary>
+    private int TreasureInteractionId() => (int)Ro3Emu.Server.Data.Config.NPCConfig.Get(
+        _app.Services.GetRequiredService<Ro3Emu.Server.Data.GameData>(), 21070002)!.Value.InteractId[0];
+
     private async Task Gm(string account, string line)
     {
         using var client = new HttpClient();
@@ -635,6 +639,13 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
         Assert.Equal(0, (await Next(alice, CharacterService.ItemUse, ItemUseResp.Parser)).Result);
         var cursor = await Next(alice, 5064, DBTreasureInfoIncrement.Parser, i => i.PointId > 0);
         Assert.True(cursor.PointId > 0);
+        ulong treasureUid = (ulong)(SceneService.TreasureUidPrefix | session.Role!.Id);
+        var spawned = await Next(alice, Ro3Emu.Server.Maps.GameAoiSink.SyncAoiView, AoIViewChangeData.Parser,
+            v => v.Bases.Any(b => b.Uuid == treasureUid));
+        // LC_InteractCondition.CheckTreasureIsHunt compares the NPC's ScenePointId custom data with the hunt's point.
+        Assert.Contains(spawned.Bases.Single(b => b.Uuid == treasureUid).CustomDatas,
+            c => c.Id == 104 && c.CustomParam.LongParam == cursor.PointId);
+        int interactionId = TreasureInteractionId();
 
         var target = _app.Services.GetRequiredService<SceneService>().TreasurePoint(cursor.PointId);
         Assert.NotNull(target);
@@ -644,7 +655,7 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
         await Gm("alice", $"!jump {x} {z}");
         await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
         {
-            NpcUid = SceneService.TreasureUidPrefix | session.Role!.Id, InteractionId = 4,
+            NpcUid = SceneService.TreasureUidPrefix | session.Role.Id, InteractionId = interactionId,
         });
         var interaction = await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser);
         Assert.Equal(0, interaction.Result);
@@ -653,7 +664,7 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
 
         await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
         {
-            NpcUid = SceneService.TreasureUidPrefix | session.Role.Id, InteractionId = 4,
+            NpcUid = SceneService.TreasureUidPrefix | session.Role.Id, InteractionId = interactionId,
         });
         Assert.NotEqual(0, (await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser,
             i => i.Result != 0)).Result);
@@ -1135,7 +1146,7 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
         await Gm("alice", $"!jump {x} {z}");
         await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
         {
-            NpcUid = SceneService.TreasureUidPrefix | session.Role!.Id, InteractionId = 4,
+            NpcUid = SceneService.TreasureUidPrefix | session.Role!.Id, InteractionId = TreasureInteractionId(),
         });
         Assert.Equal(0, (await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser)).Result);
         await Next(alice, 83251, TreasureEventNotify.Parser);
@@ -1182,5 +1193,38 @@ public sealed class ActivityAdventuresTests : IAsyncLifetime
             i => i.Status == TaskState.Finish && i.StartTime > login.StartTime, "renewed for the new day");
         Assert.Equal(1, renewed.CompleteNum[0]);
         Assert.Equal(other.StartTime, (await QuestProbe.ReadAsync(_app, "alice", 110001))!.StartTime); // never renews
+    }
+
+    /// <summary>Hunt rules that hold whatever the content is, on the synthetic data set (no class-level client host).</summary>
+    public sealed class Synthetic
+    {
+        /// <summary>The hunt NPC carries custom data 104 ScenePointId = the hunt point (LC_InteractCondition
+        /// CheckTreasureIsHunt), and the dig answers the NPC's configured NPCConfig _iInteractID, the id the client sends.</summary>
+        [Fact]
+        public async Task TreasureNpcCarriesItsPointAndAnswersItsConfiguredInteraction()
+        {
+            await using var host = await SyntheticHost.StartAsync();
+            await using var alice = await host.InWorldAsync("Alice");
+            var session = host.Service<SessionRegistry>().All().Single(s => s.Role?.Name == "Alice");
+            var scene = host.Service<SceneService>();
+            const long PointId = 7001;
+            await host.Service<GameLoop>().InvokeAsync(() =>
+            {
+                scene.TreasureComplete = _ => Task.FromResult(0);
+                session.ActivityRuntime.AdventureTreasure.PointId = PointId;
+                session.ActivityRuntime.AdventureTreasure.Began = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                return scene.SpawnTreasureNpcAsync(session);
+            });
+            ulong uid = (ulong)(SceneService.TreasureUidPrefix | session.Role!.Id);
+            var view = await Next(alice, Ro3Emu.Server.Maps.GameAoiSink.SyncAoiView, AoIViewChangeData.Parser,
+                v => v.Bases.Any(b => b.Uuid == uid));
+            Assert.Contains(view.Bases.Single(b => b.Uuid == uid).CustomDatas,
+                c => c.Id == 104 && c.CustomParam.LongParam == PointId);
+
+            int interaction = (int)Ro3Emu.Server.Data.Config.NPCConfig.Get(
+                host.Service<Ro3Emu.Server.Data.GameData>(), 21070002)!.Value.InteractId[0];
+            await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq { NpcUid = (long)uid, InteractionId = interaction });
+            Assert.Equal(0, (await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser)).Result);
+        }
     }
 }
