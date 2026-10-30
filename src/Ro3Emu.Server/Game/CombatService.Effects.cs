@@ -731,7 +731,8 @@ public sealed partial class CombatService
         await _world.RemoveUnitAsync(unit);
     }
 
-    /// <summary>Scene/role/disconnect teardown invalidates callbacks before despawning owned skill entities.</summary>
+    /// <summary>Scene/role/disconnect/death teardown invalidates callbacks and action locks before despawning owned
+    /// skill entities.</summary>
     public async Task ClearSkillsAsync(GameSession s)
     {
         _eventAttacks.Remove(s);
@@ -739,6 +740,7 @@ public sealed partial class CombatService
         s.Attack = null;
         if (s.SkillCast is { } cast) cast.Cancelled = true;
         s.SkillCast = null;
+        s.SkillActionEnds.Clear(); // a recast after the respawn or in the next scene waits for no old action (inferred)
         foreach (var unit in s.SkillObjects.ToArray()) await RemoveSkillObjectAsync(unit);
     }
 

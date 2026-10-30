@@ -9,12 +9,13 @@ namespace Ro3Emu.Tests;
 /// <summary>
 /// Invented content: a skill that may cut another skill's action (_bCancelCast 1) and has no cooldown cannot cut and
 /// restart its own action by being spammed; it waits for its action like a normal attack waits for its swing (issue #121),
-/// with the same CombatService.SwingJitterMs of slack. Another skill still cuts the action.
+/// with the same CombatService.SwingJitterMs of slack. Another skill still cuts the action. The wait outlives the cast:
+/// interrupting it (31124), walking away or cutting it with another skill does not free the skill early.
 /// </summary>
-public sealed class SkillRecastTests : IAsyncDisposable
+public sealed partial class SkillRecastTests : IAsyncDisposable
 {
-    private const int Dust = 99201, Spark = 99301;
-    private const int ActionMs = 1200;
+    private const int Dust = 99201, Spark = 99301, Hymn = 99401;
+    private const int ActionMs = 1200, ChantMs = 1500;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ro3emu-recast-" + Guid.NewGuid().ToString("N"));
     private SyntheticHost? _host;
@@ -68,6 +69,7 @@ public sealed class SkillRecastTests : IAsyncDisposable
         {
             [Dust.ToString(CultureInfo.InvariantCulture)] = Skill(Dust, 992),
             [Spark.ToString(CultureInfo.InvariantCulture)] = Skill(Spark, 993),
+            [Hymn.ToString(CultureInfo.InvariantCulture)] = Chanted(Hymn, 994),
         }));
         _host = await SyntheticHost.StartAsync(o => o.GameDataDir = _root);
         return await Host.InWorldAsync("Recaster");
@@ -77,6 +79,13 @@ public sealed class SkillRecastTests : IAsyncDisposable
     private static object Skill(int id, int group) => new
     {
         _iID = id, _iSkillID = group, _iBasicType = 1, _bCancelCast = 1, _iCD = 0, _iActionTime = ActionMs,
+    };
+
+    /// <summary>The same skill with a fixed chant before its action.</summary>
+    private static object Chanted(int id, int group) => new
+    {
+        _iID = id, _iSkillID = group, _iBasicType = 1, _bCancelCast = 1, _iCD = 0, _iActionTime = ActionMs,
+        _iChantFix = ChantMs,
     };
 
     private async Task<int> Cast(BotClient bot, int skill)
