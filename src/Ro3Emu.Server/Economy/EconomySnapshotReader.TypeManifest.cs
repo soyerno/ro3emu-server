@@ -82,9 +82,12 @@ public static partial class EconomySnapshotReader
     // leave the warehouse by being built on a war map; WartimeSlots are operator permissions and WartimePrepay the
     // machines a member reserved for the blueprint they place. No balance and no asset: machines never reach a bag, a
     // purse or a trade.
+    // Daily compensation: role.daily DailyState.Compensation lists, per ended day, the goods of the To-Do boxes that day
+    // reached and left unclaimed. An obligation, not a holding: the goods are sourced only by the 1058 letter's
+    // mail/deliver receipt (ActivityReward), delivered once by its daily-compensation delivery key, which also removes the day.
     // Wild AFK: role.wild_afk WildAfkService.State.GmUnlocked is a GM unlock marker (!afkunlock, a GM aid) that keeps
     // function 18 open for the role. No balance and no asset: it only gates the OnHook requests.
-    public const string ExpectedFormatManifestHash = "7C2BFAC08784D5A01C6086B547AC38E79680E0FC0CA7A2067DEBB9ECFA1401CA";
+    public const string ExpectedFormatManifestHash = "9D35930764572398DC64011BA87CF32BA0CE62F56308DF79418982AF014424C6";
     public static string FormatManifestHash => State.FormatManifestHash;
 
     private sealed partial class State
