@@ -431,7 +431,7 @@ public sealed partial class TaskService
 
     public string Describe(GameSession session) => session.Tasks == null ? "-" :
         string.Join(", ", session.Tasks.Infos.Values.Where(i => i.Status is Running or Finished)
-            .Select(i => $"{i.TaskId} {_data.TextOf(_data.Row("TaskConfig", i.TaskId)!.Value, "_iName")} [{string.Join('/', i.CompleteNum)}]"));
+            .Select(i => $"{i.TaskId} {QuestName(i.TaskId)} [{string.Join('/', i.CompleteNum)}]"));
 
     // ---- engine ----
 

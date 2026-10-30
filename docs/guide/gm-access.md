@@ -19,6 +19,10 @@ At startup the server logs who has GM. With an empty list it warns loudly in bot
 - Production and nobody has GM: `!!! Production: Ro3Emu:GmAccounts is empty, so NO account has GM commands in game.`
 - GM open to everyone on a public address (`PublicHost` not loopback): `!!! Ro3Emu:GmAccounts is empty and GM is open: EVERY account can use GM commands in game ...`
 
+The [web panel](panel.md)'s admin area uses the same list, with one difference: an empty list means nobody is an
+admin there, whatever `GmOpenWhenEmpty` says. Its GM console runs a command for any character in the game: the
+admin's rights count there, not those of the character's account.
+
 ## Configuration
 
 Like every `Ro3Emu:` option, the list can be set in `appsettings.json`:
@@ -37,8 +41,34 @@ or through environment variables, one per account: `Ro3Emu__GmAccounts__0=your-a
 ## The loopback tool
 
 `POST http://127.0.0.1:5380/ro3emu/gm?account=<account>` (body `!warp 10111 150 190`) answers only on loopback and
-keeps its own rule: with an empty list it runs for any online account, with a list only for listed accounts.
-Production does not close it; it is the operator's tool on the server machine.
+is authorized by that origin, not by the target account: it runs for any online account, whether `GmAccounts` is empty
+or lists other accounts, so an admin panel on the server machine can act on ordinary players. Production does not
+close it. The trust boundary is the host: any process that can reach loopback on the server machine (including a
+reverse proxy on it, see [security](../systems/security.md)) can run GM commands as any online account. The relay
+does not widen in-game access: the same account's `!` chat lines and GM panel still follow the table above.
+
+It answers 200 with the command's reply as a JSON string (`"accept 10101010: ..."`; several replies are joined with a
+newline; `"done"` when the command replied nothing). The reply still goes to the player's chat too. 400 `not in game`
+when the account has no character in the world, 404 from any address but loopback, 503 while the server is not
+accepting commands.
+
+### Quest debugging
+
+Two loopback-only reads (404 from any other address) help with `!quest accept|finish|done|drop <taskId> | reset`:
+
+- `GET /ro3emu/quests`: every quest of TaskConfig, sorted by id, `[{"id": 10101010, "name": "..."}]` (`[]` without
+  the table).
+- `GET /ro3emu/quests?account=<account>`: the quests of that account's character in the world (account matched
+  without regard to case; 400 `not in game` otherwise):
+
+  ```json
+  {"account": "tester", "role": "Alice", "quests": [
+    {"id": 10101010, "name": "...", "status": "running", "progress": [{"done": 0, "need": 1}], "completed": 0}]}
+  ```
+
+  Every quest the character holds or has delivered, sorted by id. `status` is the TaskState in lower case (`running`,
+  `finish`, `delivery`, ...; `delivery` for a quest only counted in CompleteTaskNum), `progress` has one entry per
+  target and `completed` is how many times it was delivered.
 
 ## A public server
 

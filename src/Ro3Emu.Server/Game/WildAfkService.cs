@@ -18,11 +18,14 @@ namespace Ro3Emu.Server.Game;
 /// _iNormalDrop remains additive under its own configured conditions.
 /// No offline reward formula is present in the current schema; 43405 refuses without granting phantom loot.
 /// </summary>
-public sealed class WildAfkService : IGameTicker
+public sealed partial class WildAfkService : IGameTicker
 {
     public const uint Sync = 5035, Info = 43401, Notify = 43402, SaveCharge = 43403, Collection = 43404,
         OfflineReward = 43405, Magnification = 43406, DungeonStart = 43408, Start = 43409, Pause = 43410,
         Snapshot = 43411, SuspendReason = 43412;
+
+    /// <summary>FunctionConfig / enum_FunctionType WildAFK: the OnHook auto mode.</summary>
+    public const long Function = 18;
 
     private readonly GameData _data;
     private readonly RoleStore _roles;
@@ -42,6 +45,8 @@ public sealed class WildAfkService : IGameTicker
         public long RemainderMs { get; set; }
         public long LastToggleMs { get; set; }
         public Dictionary<int, long> TotalDrops { get; set; } = new();
+        /// <summary>GM aid, not original behavior: !afkunlock keeps <see cref="Function"/> open for this role.</summary>
+        public bool GmUnlocked { get; set; }
         [JsonIgnore] public DBWildAFKInfo Info { get; set; } = new();
         [JsonIgnore] public long AccountedAtMs { get; set; }
         [JsonIgnore] public long LastKillAtMs { get; set; }
@@ -55,7 +60,7 @@ public sealed class WildAfkService : IGameTicker
     }
 
     public WildAfkService(GameData data, RoleStore roles, FunctionService functions, TaskService tasks, DailyActivityService daily,
-        SessionRegistry sessions, World world, GameLoop loop, SceneService scene, CombatService combat, RewardService rewards)
+        SessionRegistry sessions, World world, GameLoop loop, SceneService scene, CombatService combat, RewardService rewards, GmCommands gm)
     {
         this._data = data;
         this._roles = roles;
@@ -73,6 +78,8 @@ public sealed class WildAfkService : IGameTicker
         rewards.KillDropsGranted.Add(DropsGrantedAsync);
         daily.BeforeReset = BeforeDailyResetAsync;
         daily.PlanAfkRollover = PlanDailyRollover;
+        functions.GmOpened = (s, id) => id == Function && s.WildAfk is { GmUnlocked: true };
+        RegisterGm(gm);
     }
 
     private long Param(string key, long fallback) => _data.Table("PublicParamConfig").TryGetValue(key, out var value)
@@ -94,7 +101,7 @@ public sealed class WildAfkService : IGameTicker
         catch { scope.Dispose(); throw; }
         return scope;
     }
-    private bool Unlocked(GameSession s) => s.Progress != null && _functions.IsOpen(s, 18);
+    private bool Unlocked(GameSession s) => s.Progress != null && _functions.IsOpen(s, Function);
     private bool Field(GameSession s) => s.InstanceId == 0 && _data.Row("MapConfig", s.SceneEntry) is { } map
         && GameData.Int(map, "_iSceneType") == 1; // enum scene type: field; private/dungeon maps never qualify.
     private bool Ordinary(MonsterUnit monster) => _data.Row("NPCConfig", monster.Template.NpcId) is { } npc

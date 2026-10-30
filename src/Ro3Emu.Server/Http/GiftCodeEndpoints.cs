@@ -1,5 +1,10 @@
+using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Options;
 using Ro3Emu.Server.Game;
 
 namespace Ro3Emu.Server.Http;
@@ -14,6 +19,48 @@ namespace Ro3Emu.Server.Http;
 public static class GiftCodeEndpoints
 {
     public const string UsePath = "/gift-card/use/v2";
+
+    /// <summary>Konsor addition (not original): the website backend's redemption, see <see cref="MapSite"/>.</summary>
+    public const string SiteRedeemPath = "/ro3emu/account/redeem-gift";
+
+    /// <summary>The header that carries <see cref="ServerOptions.SiteApiKey"/>.</summary>
+    public const string SiteKeyHeader = "X-Ro3Emu-Site-Key";
+
+    /// <summary>
+    /// Konsor addition (not original; the client has no such request). The Konsor website's backend, on the same
+    /// machine, redeems a code for its signed-in account: POST form account (login name), role_id, code, with
+    /// <see cref="SiteKeyHeader"/> equal to Ro3Emu:SiteApiKey. Loopback only and off while the key is empty (404); a
+    /// wrong key is 403, a missing or invalid field 400. Otherwise HTTP 200 with the same JSON {code, message} and the
+    /// same refusals as <see cref="UsePath"/> (GiftCodeService.RedeemForAccountAsync).
+    /// </summary>
+    public static void MapSite(WebApplication app) =>
+        app.MapPost(SiteRedeemPath, async (HttpRequest request, IOptions<ServerOptions> options, GiftCodeService gifts) =>
+        {
+            if (request.HttpContext.Connection.RemoteIpAddress is not { } ip || !IPAddress.IsLoopback(ip)
+                || options.Value.SiteApiKey is not { Length: > 0 } key)
+                return Results.NotFound();
+            if (!KeyMatches(request.Headers[SiteKeyHeader].ToString(), key)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (await ReadSiteFormAsync(request) is not { } form)
+                return Results.Json(Body(GiftCodeService.Answer(ErrorCodes.GiftCardBadRequest)), statusCode: StatusCodes.Status400BadRequest);
+            return Reply(await gifts.RedeemForAccountAsync(form.Account, form.RoleId, form.Code));
+        });
+
+    /// <summary>Constant-time comparison of the sent key with the configured one (hashed first, so not even the length leaks).</summary>
+    private static bool KeyMatches(string sent, string key) =>
+        CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(sent)), SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+
+    private sealed record SiteForm(string Account, string RoleId, string Code);
+
+    /// <summary>The three form fields, or null when the body is not a form or a field is missing or invalid.</summary>
+    private static async Task<SiteForm?> ReadSiteFormAsync(HttpRequest request)
+    {
+        if (!request.HasFormContentType || request.ContentLength > MaxBodyBytes) return null;
+        var form = await request.ReadFormAsync(request.HttpContext.RequestAborted);
+        string account = form["account"].ToString().Trim(), roleId = form["role_id"].ToString().Trim(),
+            code = form["code"].ToString().Trim();
+        bool validRole = long.TryParse(roleId, NumberStyles.None, CultureInfo.InvariantCulture, out long id) && id > 0;
+        return account.Length > 0 && validRole && code.Length > 0 ? new SiteForm(account, roleId, code) : null;
+    }
 
     /// <summary>(inferred) The largest body read; the client's is a few hundred bytes.</summary>
     public const int MaxBodyBytes = 8192;
@@ -31,7 +78,9 @@ public static class GiftCodeEndpoints
             return Reply(await gifts.RedeemAsync(body));
         });
 
-    private static IResult Reply(GiftCodeAnswer answer) => Results.Json(new { code = answer.Code, message = answer.Message });
+    private static IResult Reply(GiftCodeAnswer answer) => Results.Json(Body(answer));
+
+    private static object Body(GiftCodeAnswer answer) => new { code = answer.Code, message = answer.Message };
 
     /// <summary>The fields the server uses, or null for a body that is too large or not a JSON object.</summary>
     private static async Task<GiftCodeRequest?> ReadAsync(HttpRequest request)

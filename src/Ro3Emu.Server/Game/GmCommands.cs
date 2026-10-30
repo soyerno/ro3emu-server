@@ -11,8 +11,8 @@ namespace Ro3Emu.Server.Game;
 /// GM commands, two ways in: "!command" lines typed in any chat channel (replies go to the typist only, as the
 /// client's marquee, BROADCAST_NOTIFY 83270 with a raw string) and the client's own GM panel (GENERAL_PROC_GM 30300,
 /// ). ServerOptions.GmAccounts limits who may use them; empty means everyone unless
-/// ServerOptions.GmOpenWhenEmpty is false (a Production host, docs/guide/gm-access.md). The loopback HTTP /ro3emu/gm keeps
-/// "empty = everyone" (<see cref="Allowed(ServerOptions, string?, bool)"/>).
+/// ServerOptions.GmOpenWhenEmpty is false (a Production host, docs/guide/gm-access.md). The loopback HTTP /ro3emu/gm runs
+/// for any online account, whatever the list (<see cref="Allowed(ServerOptions, string?, bool)"/>).
 /// </summary>
 public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData data, SessionRegistry sessions, CharacterService character, SceneService scene, TaskService tasks, IServiceProvider services, ILogger<GmCommands> log)
 {
@@ -42,13 +42,15 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
     public bool Allowed(GameSession session) => Allowed(options.Value, session.Account, loopbackTool: false);
 
     /// <summary>
-    /// A listed account always may. An empty list means everyone for the loopback HTTP tool (unchanged), and in game
+    /// The loopback HTTP tool is authorized by its origin, not by the target account: the operator (or the admin panel)
+    /// on the server machine acts on any online account. In game a listed account always may, and with an empty list
     /// whatever <see cref="ServerOptions.GmOpenWhenEmpty"/> says (unset = everyone, as for tests and local play).
     /// </summary>
     internal static bool Allowed(ServerOptions options, string? account, bool loopbackTool)
     {
+        if (loopbackTool) return true;
         var allowed = options.GmAccounts;
-        if (allowed.Length == 0) return loopbackTool || options.GmOpenWhenEmpty != false;
+        if (allowed.Length == 0) return options.GmOpenWhenEmpty != false;
         return account != null && allowed.Contains(account, StringComparer.Ordinal);
     }
 
@@ -62,7 +64,7 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
             (parts.Length < 2 || !parts[1].Equals("goto", StringComparison.OrdinalIgnoreCase)));
     }
 
-    /// <param name="loopbackTool">The loopback HTTP /ro3emu/gm: an empty GmAccounts still means everyone.</param>
+    /// <param name="loopbackTool">The loopback HTTP /ro3emu/gm: authorized by its origin, not by GmAccounts.</param>
     public Task RunAsync(GameSession session, string line, bool loopbackTool = false)
     {
         // A GM line typed in chat arrives inside the chat message's role scope (C/D 16). GM admits its own scope (Realm
@@ -72,19 +74,27 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
             services.GetRequiredService<GameLoop>().TrackRuntimeDetached("GM", () => RunAsync(session, line, loopbackTool));
             return Task.CompletedTask;
         }
-        return RunAdmittedAsync(session, line, loopbackTool);
+        return RunAdmittedAsync(session, line, loopbackTool, panelAdmin: false);
     }
 
-    private Task RunAdmittedAsync(GameSession session, string line, bool loopbackTool)
+    /// <summary>
+    /// The web panel's GM console (docs/guide/panel.md): an admin the panel signed in (an account of GmAccounts) runs
+    /// <paramref name="line"/> for <paramref name="session"/>, which may be any player's, so the session's own account
+    /// is not checked. Call it on the loop.
+    /// </summary>
+    internal Task RunForPanelAdminAsync(GameSession session, string line) =>
+        RunAdmittedAsync(session, line, loopbackTool: false, panelAdmin: true);
+
+    private Task RunAdmittedAsync(GameSession session, string line, bool loopbackTool, bool panelAdmin)
         => session.Owners is { } owners
             ? IsEventOwnerCommand(line)
-                ? owners.RunEconomicRequestAsync(session, () => RunCoreAsync(session, line, loopbackTool))
-                : owners.RunSessionAsync("GM", [Ownership.ReservationKey.Realm], session, () => RunCoreAsync(session, line, loopbackTool))
-            : RunCoreAsync(session, line, loopbackTool);
+                ? owners.RunEconomicRequestAsync(session, () => RunCoreAsync(session, line, loopbackTool, panelAdmin))
+                : owners.RunSessionAsync("GM", [Ownership.ReservationKey.Realm], session, () => RunCoreAsync(session, line, loopbackTool, panelAdmin))
+            : RunCoreAsync(session, line, loopbackTool, panelAdmin);
 
-    private async Task RunCoreAsync(GameSession session, string line, bool loopbackTool)
+    private async Task RunCoreAsync(GameSession session, string line, bool loopbackTool, bool panelAdmin)
     {
-        if (!Allowed(options.Value, session.Account, loopbackTool))
+        if (!panelAdmin && !Allowed(options.Value, session.Account, loopbackTool))
         {
             await ReplyAsync(session, "GM commands are not enabled for this account.");
             return;
@@ -226,8 +236,35 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
         }
     }
 
-    public static Task ReplyAsync(GameSession session, string text) =>
-        session.SendGameAsync(BroadcastNotify, new BroadCastNotify { Content = text });
+    public static Task ReplyAsync(GameSession session, string text)
+    {
+        session.GmReplies?.Add(text);
+        if (LoopbackReplies.Value is { } capture && capture.Session == session) capture.Texts.Add(text);
+        return session.SendGameAsync(BroadcastNotify, new BroadCastNotify { Content = text });
+    }
+
+    /// <summary>
+    /// The replies a loopback /ro3emu/gm line sends to its session. Flow-local (AsyncLocal), not shared state: each HTTP
+    /// request's flow sees only its own capture, so hosts in one process never mix them. Replies of a line that runs
+    /// detached (<see cref="RunAsync"/>) after the request returns are not captured.
+    /// </summary>
+    private static readonly AsyncLocal<(GameSession Session, List<string> Texts)?> LoopbackReplies = new();
+
+    /// <summary>The loopback HTTP /ro3emu/gm: runs the line and returns what it replied (still sent to the chat too), "" if nothing.</summary>
+    public async Task<string> RunLoopbackAsync(GameSession session, string line)
+    {
+        List<string> texts = [];
+        LoopbackReplies.Value = (session, texts);
+        try
+        {
+            await RunAsync(session, line, loopbackTool: true);
+        }
+        finally
+        {
+            LoopbackReplies.Value = null;
+        }
+        return string.Join("\n", texts);
+    }
 
     private Dictionary<string, (string Usage, Command Run)> Commands() => _commands ??= new()
     {
@@ -299,7 +336,7 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
         }
         ),
         ["speed"] = ("<speed, 0 = normal>", async (s, a) => await ReplyAsync(s, await character.SetSpeedAsync(s, L(a[0])))),
-        ["quest"] = ("[accept|finish|done <taskId> | reset]", async (s, a) => await ReplyAsync(s, a.Length == 0
+        ["quest"] = ("[accept|finish|done|drop <taskId> | reset]", async (s, a) => await ReplyAsync(s, a.Length == 0
             ? "Quests: " + tasks.Describe(s)
             : await tasks.GmAsync(s, a[0].ToLowerInvariant(), a.Length > 1 ? L(a[1]) : 0))),
         ["mvp"] = ("[spawn|where|goto|weaken <cfg>]", async (s, a) =>
