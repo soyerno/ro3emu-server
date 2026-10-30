@@ -228,6 +228,31 @@ public sealed partial class CombatService
         }
     }
 
+    /// <summary>
+    /// A player cast's 31101: its damage entries under the hit's show point (after their bullets), its heal entries in a
+    /// second packet under <see cref="HealEffect"/>, so a healed ally plays no hit reaction. Each goes out only when it
+    /// has entries. (inferred) the split; the client reads one show point per packet (LC_DamageHelper.CalcDamageHitPoint).
+    /// </summary>
+    private async Task SendSkillHitsAsync(GameSession[] viewers, JsonElement row, SkillHitInfo hit, long masterId)
+    {
+        static bool IsHeal(DamageInfo d) => d.DamageType is DamageType.Heal or DamageType.HealMana;
+        var damage = hit.Clone();
+        damage.Dsts.Clear();
+        damage.Dsts.AddRange(hit.Dsts.Where(d => !IsHeal(d)));
+        var heal = hit.Clone();
+        heal.Dsts.Clear();
+        heal.Dsts.AddRange(hit.Dsts.Where(IsHeal));
+        heal.ShowPoint = HealEffect(new SkillConfig(row).ScriptShow);
+        // A cast that hit nobody still sends its (empty) 31101, as before the heal split.
+        if (damage.Dsts.Count > 0 || heal.Dsts.Count == 0)
+        {
+            await SendHitBulletsAsync(viewers, row, damage, masterId);
+            foreach (var viewer in viewers) await viewer.SendGameAsync(SkillHit, damage);
+        }
+        if (heal.Dsts.Count > 0)
+            foreach (var viewer in viewers) await viewer.SendGameAsync(SkillHit, heal);
+    }
+
     private int BulletLifeTime(int effect) =>
         SkillEffectData.Find(_data.SkillTemplateTable("Lua_Config_EffectData"), effect)?.BulletLifeTime ?? 0;
 

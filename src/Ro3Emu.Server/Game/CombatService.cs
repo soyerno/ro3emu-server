@@ -362,6 +362,20 @@ public sealed partial class CombatService : IGameTicker
     }
 
     /// <summary>
+    /// The show point of a heal's 31101: the first EffectData in [show*100, show*100+99] whose m_kDamage has no
+    /// m_kActionDamge, else 0. LC_DamageHelper.CalcDamageHitPoint plays the show point's m_kActionDamge on every target
+    /// of the packet, so a healed ally sharing the damage's show point flinched. (inferred) No client file shows which
+    /// show point the original sent for a heal; one without a hit reaction is the closest that plays none.
+    /// </summary>
+    private int HealEffect(long scriptShow)
+    {
+        var effects = _data.SkillTemplateTable("Lua_Config_EffectData");
+        for (long id = scriptShow * 100; id < scriptShow * 100 + 100; id++)
+            if (SkillEffectData.Find(effects, id) is { HasDamage: true, HasHitReaction: false }) return (int)id;
+        return 0;
+    }
+
+    /// <summary>
     /// SkillHitInfo.split: how many damage words the client shows for one hit. SkillConfig._kShowDmg holds one count
     /// per show attack point and only the server reads it. LC_DamageHelper.ProcessDamageWord divides the damage into
     /// that many words and, for the caster, adds a running total (Dmg_Accumulate) for skills with _iAccumDmgType, so
