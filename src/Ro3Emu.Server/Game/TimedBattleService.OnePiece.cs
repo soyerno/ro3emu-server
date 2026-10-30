@@ -199,6 +199,8 @@ public sealed partial class TimedBattleService
 
     private (long Start, long End) TreasureWindow()
     {
+        // GM test aid (!rift open): one process-local round outside the 10:00-22:00 window.
+        if (_schedule.TestWindows.TryGetValue(200, out var test)) return (test.Start, test.End);
         var now = TimeZoneInfo.ConvertTime(_time.GetUtcNow(), _time.LocalTimeZone);
         var row = _data.Row("DailyActivityConfig", 200);
         if (row is not { } r || !r.TryGetProperty("_kTime", out var limits)

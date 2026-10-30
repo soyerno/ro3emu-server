@@ -1135,6 +1135,26 @@ public sealed class TimedEventTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task RiftTestWindowOpensARoundOutsideTheScheduleAndCloseClearsIt()
+    {
+        await using var bot = await InWorld("Odin");
+        await Gm(bot, "!lvl 99");
+        _clock.Set(new DateTimeOffset(2026, 10, 8, 20, 30, 0, TimeSpan.Zero).ToUnixTimeSeconds()); // 22:30 CEST: closed
+        for (int i = 0; i < 200 && (await RiftStonesAsync()).Length > 0; i++) await Task.Delay(20);
+        Assert.Empty(await RiftStonesAsync());
+
+        await Gm(bot, "!rift open");
+        _clock.Set(_clock.GetUtcNow().AddSeconds(1).ToUnixTimeSeconds()); // the ticker runs once per clock second
+        for (int i = 0; i < 200 && (await RiftStonesAsync()).Length == 0; i++) await Task.Delay(20);
+        Assert.NotEmpty(await RiftStonesAsync());
+
+        await Gm(bot, "!rift close");
+        _clock.Set(_clock.GetUtcNow().AddSeconds(1).ToUnixTimeSeconds());
+        for (int i = 0; i < 200 && (await RiftStonesAsync()).Length > 0; i++) await Task.Delay(20);
+        Assert.Empty(await RiftStonesAsync());
+    }
+
+    [ClientDataFact]
     public async Task RiftResolvedAnnouncementGoesOutOnceWhenTheRoundIsCleared()
     {
         await using var bot = await InWorld("Ivo");

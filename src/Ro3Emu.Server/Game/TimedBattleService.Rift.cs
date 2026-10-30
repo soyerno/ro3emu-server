@@ -266,7 +266,7 @@ public sealed partial class TimedBattleService
         if (args.Length == 0)
         {
             string maps = string.Join("; ", _riftMapTotals.Keys.Select(m => $"{_data.MapName(m)} {m} {RiftRemaining(m)}/{_riftMapTotals[m]}"));
-            await GmCommands.ReplyAsync(s, _riftRound < 0 ? "Rift Crisis is closed (open 10:00-22:00)."
+            await GmCommands.ReplyAsync(s, _riftRound < 0 ? "Rift Crisis is closed (open 10:00-22:00, or !rift open)."
                 : $"Rift round until {DateTimeOffset.FromUnixTimeSeconds(RiftRoundEnd()).ToLocalTime():HH:mm}: {maps}");
             return;
         }
@@ -278,7 +278,18 @@ public sealed partial class TimedBattleService
                 + $"{(RiftTestMinParty == null ? "in force" : "overridden; !rift party resets it")}).");
             return;
         }
-        if (_riftRound < 0) { await GmCommands.ReplyAsync(s, "Rift Crisis is closed (open 10:00-22:00): stones cannot be fought now."); return; }
+        if (args[0] is "open" or "close")
+        {
+            long now = _time.GetUtcNow().ToUnixTimeSeconds();
+            if (args[0] == "open") _schedule.TestWindows[200] = new(now, now + RiftRoundSeconds);
+            else _schedule.TestWindows.Remove(200);
+            _riftRound = long.MinValue; // the next tick places (or clears) the round
+            await GmCommands.ReplyAsync(s, args[0] == "open"
+                ? "Rift test window open for two hours: a round starts within a second (!rift close ends it)."
+                : "Rift test window closed: the regular 10:00-22:00 schedule is back.");
+            return;
+        }
+        if (_riftRound < 0) { await GmCommands.ReplyAsync(s, "Rift Crisis is closed (open 10:00-22:00, or !rift open): stones cannot be fought now."); return; }
         if (args[0].Equals("new", StringComparison.OrdinalIgnoreCase))
         {
             _riftRound = long.MinValue; // the next tick places a fresh round
@@ -286,7 +297,7 @@ public sealed partial class TimedBattleService
             return;
         }
         if (!int.TryParse(args[0], out int star) || StarRow(star) == null || s.Role == null || s.InstanceId != 0)
-        { await GmCommands.ReplyAsync(s, "Usage: !rift | !rift new | !rift party [min] | !rift <star 1-6> [boss name] (on a field map)"); return; }
+        { await GmCommands.ReplyAsync(s, "Usage: !rift | !rift new | !rift open|close | !rift party [min] | !rift <star 1-6> [boss name] (on a field map)"); return; }
         long? scene = null;
         if (args.Length > 1)
         {
