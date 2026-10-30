@@ -83,6 +83,16 @@ public sealed partial class TeamService(SessionRegistry sessions, CharacterServi
         return ExpBuff[Math.Clamp(sameMap, 1, ExpBuff.Length) - 1];
     }
 
+    /// <summary>The killer's party members online on the killer's map (WorldScene), the killer included; only the
+    /// killer when solo (ServerOptions.PartyExpShare).</summary>
+    public IReadOnlyList<GameSession> SameMapMembers(GameSession killer)
+    {
+        if (killer.Role is not { } role || !_byMember.TryGetValue(role.Id, out var team)) return [killer];
+        var members = team.Members.Select(m => m == role.Id ? killer : Session(m))
+            .OfType<GameSession>().Where(s => s.Progress != null && s.WorldScene == killer.WorldScene).ToList();
+        return members.Contains(killer) ? members : [killer, .. members];
+    }
+
     /// <summary>After a party's roster or a member's card (career, online state) changed, with the roles it concerns: the
     /// members and one who left (PassiveSkills: Union).</summary>
     internal List<Func<IReadOnlyList<long>, Task>> RosterChanged { get; } = [];

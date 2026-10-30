@@ -42,6 +42,12 @@ public sealed class ServerOptions
     /// keeps it; an operator who wants the RO1 feel turns it on.</summary>
     public bool Ro1MonsterHp { get; set; }
 
+    /// <summary>Party EXP share: a kill's Base EXP (after the level-gap correction and the TeamExpBuffNum party bonus) is
+    /// split evenly among the killer's online party members on the same map, at least 1 each (RewardService). A server
+    /// operator's option, not original behavior (inferred): the client only shows the party bonus. Off by default;
+    /// off leaves the whole Base EXP to the killer as before.</summary>
+    public bool PartyExpShare { get; set; }
+
     /// <summary>Game-message JSON log (data/logs/traffic-*.jsonl): "off", "on" or a comma-separated account list.
     /// Formatting and writes run off the game loop; keep it off for load tests and production.</summary>
     public string TrafficLog { get; set; } = "off";
