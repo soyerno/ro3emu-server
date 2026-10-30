@@ -243,7 +243,8 @@ public sealed partial class CombatService
         heal.Dsts.Clear();
         heal.Dsts.AddRange(hit.Dsts.Where(IsHeal));
         heal.ShowPoint = HealEffect(new SkillConfig(row).ScriptShow);
-        if (damage.Dsts.Count > 0)
+        // A cast that hit nobody still sends its (empty) 31101, as before the heal split.
+        if (damage.Dsts.Count > 0 || heal.Dsts.Count == 0)
         {
             await SendHitBulletsAsync(viewers, row, damage, masterId);
             foreach (var viewer in viewers) await viewer.SendGameAsync(SkillHit, damage);
