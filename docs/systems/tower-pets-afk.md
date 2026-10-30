@@ -28,16 +28,35 @@ This system is implemented against the clientB export (`re/clientB/lua-src/`).
 - Snapshots store cumulative totals and never re-grant items. Date keys use the daily reset epoch; eight dated records are retained. Power-saving `43403` is a session UI flag and does not stop server accounting.
 - Legacy offline `43405` and dungeon `43408` return explicit refusals: current 5035 has no recoverable offline-reward contract. No offline loot or AFK dungeon simulation is invented.
 
+## GM aids (not original behavior)
+
+The client has no such commands; they are admin and test aids, run in game chat or through the loopback `/ro3emu/gm`
+relay (`WildAfkService.Gm.cs`) for an online role:
+
+- `!afkunlock on|off`: a per-role override that keeps WildAFK (function 18) open whatever `FunctionConfig[18]._kOpenCondition`
+  says. It is the `GmUnlocked` field of the role's `wild_afk` JSON, so it survives relog and restart; `off` returns the
+  function to its configured condition. `FunctionService.IsOpen` honors it (through `GmOpened`), so 5056 tells the
+  client the function opened or closed, which is what shows the OnHook panel.
+- `!afktime info|set <minutes>|add <minutes>`: reads or changes the Bonus Time bank. The result is clamped at 0, and an
+  empty bank switches Bonus Time off as an exhausted one does. It is not clamped to `OnHookFightTimeLimit`: the owner
+  may grant more than 180 minutes, and the next daily restore's own cap cuts such a bank back to the limit. `info`
+  replies with the bank, the switch, and whether auto mode is open by config or by the GM override.
+- `!afkmode on|off`: the Bonus Time switch without the client's `OnHookPauseButtonCD`; `on` is refused with an empty bank.
+
+Each change follows the 43409/43410 order: under the role scope and the AFK gate the clock is settled first, the changed
+state is written to the role row, then adopted in memory (`State.Persisted` follows the write), and 5035 is resent.
+
 ## Verification
 
 `TowerPetTests` and `WildAfkTests` use real HTTP/gate/protobuf exchanges on dynamically selected test ports. Fixtures control monster HP and long clock intervals, seed earned/failed database states and hold asynchronous operations to exercise logout races; client-supplied victories or arbitrary kill counters are not accepted. All fixtures use the shared `TestPorts` selector, which never returns an already-selected port within the test host, excludes the default game ports and bounds candidate retries.
 
 Tower coverage includes four-slot persistence, ownership/duplicate/invalid-slot refusals, 33/45/50 unlock boundaries, reorder/removal requests, both starting pets casting their configured skills, actor allegiance and movement, pet-caused floor victory, both substitute entries, death reset on a fresh attempt and passive-follower restoration. Tower monsters and room lifetime use `InstanceService`; pet actors leave before the shared instance removes their owner, and the tests verify pet removal before scene handoff and closed/removed rooms with no remaining participants or monsters.
 
-AFK coverage includes full login state, manual/reduced versus Bonus Time field EXP, field kill/drop accounting, inactivity suspension, pause, favorites, snapshots, daily progress/award, rollover settlement/retry, reconnect, settings boolean presence and queued accounting/reward grants across logout and role switching. A Yoyo wire regression measures 21 reduced EXP versus 207 Bonus Time EXP from the configured tables. Direct `LoginRoleSelect` reconciles the previous role's AFK allowance before loading the next role; its regression disables the periodic AFK ticker so only role-selection cleanup can persist the pending allowance and fraction.
+AFK coverage includes full login state, manual/reduced versus Bonus Time field EXP, field kill/drop accounting, inactivity suspension, pause, favorites, snapshots, daily progress/award, rollover settlement/retry, reconnect, settings boolean presence and queued accounting/reward grants across logout and role switching. A Yoyo wire regression measures 21 reduced EXP versus 207 Bonus Time EXP from the configured tables. Direct `LoginRoleSelect` reconciles the previous role's AFK allowance before loading the next role; its regression disables the periodic AFK ticker so only role-selection cleanup can persist the pending allowance and fraction. `WildAfkGmTests` runs the GM aids on the synthetic data set, with an
+invented locked `FunctionConfig` row 18: the unlock across a restart, bank set/add with the zero clamp, and the empty-bank refusal.
 
 ```powershell
-dotnet test tests/Ro3Emu.Tests --filter "FullyQualifiedName~TowerPetTests|FullyQualifiedName~WildAfkTests"
+dotnet test tests/Ro3Emu.Tests --filter "FullyQualifiedName~TowerPetTests|FullyQualifiedName~WildAfk"
 ```
 
 These tests do not cover visual behavior in the game client.

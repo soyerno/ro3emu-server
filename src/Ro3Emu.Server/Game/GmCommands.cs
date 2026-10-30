@@ -11,8 +11,8 @@ namespace Ro3Emu.Server.Game;
 /// GM commands, two ways in: "!command" lines typed in any chat channel (replies go to the typist only, as the
 /// client's marquee, BROADCAST_NOTIFY 83270 with a raw string) and the client's own GM panel (GENERAL_PROC_GM 30300,
 /// ). ServerOptions.GmAccounts limits who may use them; empty means everyone unless
-/// ServerOptions.GmOpenWhenEmpty is false (a Production host, docs/guide/gm-access.md). The loopback HTTP /ro3emu/gm keeps
-/// "empty = everyone" (<see cref="Allowed(ServerOptions, string?, bool)"/>).
+/// ServerOptions.GmOpenWhenEmpty is false (a Production host, docs/guide/gm-access.md). The loopback HTTP /ro3emu/gm runs
+/// for any online account, whatever the list (<see cref="Allowed(ServerOptions, string?, bool)"/>).
 /// </summary>
 public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData data, SessionRegistry sessions, CharacterService character, SceneService scene, TaskService tasks, IServiceProvider services, ILogger<GmCommands> log)
 {
@@ -42,13 +42,15 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
     public bool Allowed(GameSession session) => Allowed(options.Value, session.Account, loopbackTool: false);
 
     /// <summary>
-    /// A listed account always may. An empty list means everyone for the loopback HTTP tool (unchanged), and in game
+    /// The loopback HTTP tool is authorized by its origin, not by the target account: the operator (or the admin panel)
+    /// on the server machine acts on any online account. In game a listed account always may, and with an empty list
     /// whatever <see cref="ServerOptions.GmOpenWhenEmpty"/> says (unset = everyone, as for tests and local play).
     /// </summary>
     internal static bool Allowed(ServerOptions options, string? account, bool loopbackTool)
     {
+        if (loopbackTool) return true;
         var allowed = options.GmAccounts;
-        if (allowed.Length == 0) return loopbackTool || options.GmOpenWhenEmpty != false;
+        if (allowed.Length == 0) return options.GmOpenWhenEmpty != false;
         return account != null && allowed.Contains(account, StringComparer.Ordinal);
     }
 
@@ -62,7 +64,7 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
             (parts.Length < 2 || !parts[1].Equals("goto", StringComparison.OrdinalIgnoreCase)));
     }
 
-    /// <param name="loopbackTool">The loopback HTTP /ro3emu/gm: an empty GmAccounts still means everyone.</param>
+    /// <param name="loopbackTool">The loopback HTTP /ro3emu/gm: authorized by its origin, not by GmAccounts.</param>
     public Task RunAsync(GameSession session, string line, bool loopbackTool = false)
     {
         // A GM line typed in chat arrives inside the chat message's role scope (C/D 16). GM admits its own scope (Realm

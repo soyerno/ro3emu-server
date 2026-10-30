@@ -37,8 +37,11 @@ or through environment variables, one per account: `Ro3Emu__GmAccounts__0=your-a
 ## The loopback tool
 
 `POST http://127.0.0.1:5380/ro3emu/gm?account=<account>` (body `!warp 10111 150 190`) answers only on loopback and
-keeps its own rule: with an empty list it runs for any online account, with a list only for listed accounts.
-Production does not close it; it is the operator's tool on the server machine.
+is authorized by that origin, not by the target account: it runs for any online account, whether `GmAccounts` is empty
+or lists other accounts, so an admin panel on the server machine can act on ordinary players. Production does not
+close it. The trust boundary is the host: any process that can reach loopback on the server machine (including a
+reverse proxy on it, see [security](../systems/security.md)) can run GM commands as any online account. The relay
+does not widen in-game access: the same account's `!` chat lines and GM panel still follow the table above.
 
 ## A public server
 
