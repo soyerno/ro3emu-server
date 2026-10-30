@@ -104,6 +104,9 @@ public sealed class ServerOptions
     /// </summary>
     public bool? GmOpenWhenEmpty { get; set; }
 
+    /// <summary>The web control panel on its own port (docs/guide/panel.md).</summary>
+    public Ro3Emu.Panel.PanelOptions Panel { get; set; } = new();
+
     /// <summary>In-game bug reports (FeedbackService, docs/guide/feedback.md).</summary>
     public FeedbackOptions Feedback { get; set; } = new();
 
@@ -131,6 +134,13 @@ public sealed class ServerOptions
     /// from the account budget. Behind a reverse proxy every player shares the proxy's address, so raise this there.
     /// </summary>
     public int GiftCodeAttemptsPerMinute { get; set; } = 10;
+
+    /// <summary>
+    /// Konsor addition (not original): the shared secret the Konsor website's backend sends in the X-Ro3Emu-Site-Key
+    /// header to the loopback POST /ro3emu/account/redeem-gift (docs/systems/gift-codes.md). Empty disables that
+    /// endpoint.
+    /// </summary>
+    public string SiteApiKey { get; set; } = "";
 
     /// <summary>Team voice relay proof of concept (Voice/, docs TBD). Off until a port is set.</summary>
     public VoiceOptions Voice { get; set; } = new();
