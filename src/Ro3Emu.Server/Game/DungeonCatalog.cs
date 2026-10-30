@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Ro3Emu.Server.Data;
+using Ro3Emu.Server.Data.Config;
 using Ro3Emu.Server.Maps;
 using Romsg;
 
@@ -322,8 +323,9 @@ public sealed class DungeonCatalog(GameData data, WorldData worldData, MonsterSe
     /// <summary>
     /// A scripted scene's steps (ReconstructedDungeons.Scripted): one wave without monsters per step. Every reference
     /// must resolve in the client data and the scene's map, or the scene is refused like any unresolved encounter:
-    /// the quests the tracker shows, the actors' NPCConfig rows, points and buffs, the stories, regions and points,
-    /// and the interactions and dungeon messages the step's actors can actually send.
+    /// the quests the tracker shows, the actors' NPCConfig rows, points and buffs, the companions' rows (each one able to
+    /// fight beside the player), the stories, regions and points, and the interactions and dungeon messages the step's
+    /// actors can actually send.
     /// </summary>
     private IReadOnlyList<Wave> ScriptedWaves(ReconstructedDungeons.ScriptedScene scene, MapWorld map)
     {
@@ -336,8 +338,16 @@ public sealed class DungeonCatalog(GameData data, WorldData worldData, MonsterSe
                 if (data.Row("NPCConfig", actor.NpcId) is not { } npc || GameData.Int(npc, "_iNPCType") is not (1 or 2)
                     || !map.Points.ContainsKey(actor.Point)
                     || actor.Buffs.Any(b => data.Row("BuffConfig", b) is not { } buff || GameData.Int(buff, "_iBuffID") <= 0)) return [];
+            // A companion is a client NPC that can fight beside the player (CompanionUnit.Build); it carries no buffs.
+            if (step.Companions.Any(c => !map.Points.ContainsKey(c.Point) || c.Buffs.Count > 0
+                    || CompanionUnit.Build(data, monsters, c.NpcId) == null)) return [];
             if (step.Story != 0 && data.Row("PlotInterpretation", step.Story) == null) return [];
             if (step.TeleportAfter != 0 && !map.Points.ContainsKey(step.TeleportAfter)) return [];
+            if (step.HoldAfterMs is < 0 or > 60000) return [];
+            // A ride needs its route, an actor that walks (a UnitConfig speed) and an actor interaction that completes the step.
+            if (step.RideAfter != 0 && (!map.GuidePaths.ContainsKey(step.RideAfter)
+                || !step.Complete.Any(t => t.Kind is ReconstructedDungeons.TriggerKind.Interaction or ReconstructedDungeons.TriggerKind.Message)
+                || !step.Actors.Any(a => NPCConfig.Get(data, a.NpcId) is { } n && UnitConfig.Get(data, n.UnitId) is { Speed: > 0 }))) return [];
             foreach (var t in step.Complete.Concat(step.Ignore))
             {
                 bool known = t.Kind switch
@@ -358,6 +368,7 @@ public sealed class DungeonCatalog(GameData data, WorldData worldData, MonsterSe
             if (step.Shelter is { } shelter && (!step.Fight.Any(f => f.NpcId == shelter.Boss) || !step.Actors.Any(a => a.NpcId == shelter.Cover)
                     || data.Row("ChatConfig", shelter.Tip) == null || data.Row("SkillConfig", shelter.Skill) == null
                     || shelter.EveryMs <= shelter.WarnMs || shelter.WarnMs < 0 || shelter.Width <= 0 || shelter.Depth <= 0)) return [];
+            if (step.React is { } react && !ReactionResolves(step, react)) return [];
             foreach (var (interaction, skill, shots) in step.Strikes ?? [])
                 if (step.Fight.Count == 0 || shots < 0 || data.Row("SkillConfig", skill) == null
                     || !step.Actors.Any(a => Interactions(a.NpcId).Contains(interaction))) return [];
@@ -373,6 +384,18 @@ public sealed class DungeonCatalog(GameData data, WorldData worldData, MonsterSe
         if (scene.Unplayed.Any(q => scene.Steps.Any(s => s.Quest == q) || !data.Table("DungeonQuestConfig").Values.Any(r =>
                 GameData.Int(r, "_iDungeonID") == scene.Scene && GameData.Int(r, "_iQuestID") == q))) return [];
         return waves;
+    }
+
+    /// <summary>A step's reactions: its speaker and every reacting actor are actors of the step, its lines ChatConfig rows
+    /// and its effects BuffConfig rows of a buff group.</summary>
+    private bool ReactionResolves(ReconstructedDungeons.ScriptedStep step, ReconstructedDungeons.Reaction react)
+    {
+        bool Shown(int npc) => step.Actors.Any(a => a.NpcId == npc);
+        bool Line(int chat) => data.Row("ChatConfig", chat) != null;
+        bool Resolves(ReconstructedDungeons.Response? r) => r == null
+            || (r.Say == 0 || Line(r.Say)) && (r.Buff == 0
+                || Shown(r.On) && Data.Config.BuffConfig.Get(data, r.Buff) is { BuffId: > 0 });
+        return Shown(react.Speaker) && react.Start.All(Line) && Resolves(react.Ignored) && Resolves(react.Complete);
     }
 
     /// <summary>
@@ -454,6 +477,13 @@ public sealed class DungeonCatalog(GameData data, WorldData worldData, MonsterSe
     /// <summary>A scene-editor point (m_kAllPoints) of the scene's map.</summary>
     public MapPoint? ScenePoint(long scene, long point) =>
         worldData.Map(scene)?.Points.TryGetValue(point, out var p) == true ? p : null;
+
+    /// <summary>The guide routes (m_kGuidePoints) of the scene's scene editor file.</summary>
+    public IReadOnlyList<long> GuideRoutes(long scene) => worldData.Map(scene)?.GuideRoutes ?? [];
+
+    /// <summary>The points of a guide route of the scene (m_kGuidePoints), or null when it has none.</summary>
+    public IReadOnlyList<(float X, float Y, float Z)>? GuidePath(long scene, long route) =>
+        worldData.Map(scene)?.GuidePaths.TryGetValue(route, out var path) == true ? path : null;
 
     /// <summary>A scene-editor region (m_kRegins) of the scene's map.</summary>
     public MapRegion? SceneRegion(long scene, long region) =>

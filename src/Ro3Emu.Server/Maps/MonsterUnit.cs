@@ -17,12 +17,21 @@ public sealed record MonsterTemplate(
     public BossSkillBook? Skills { get; init; }
     /// <summary>AttriMonsterConfig cast speed (116), retained for live chant modifiers.</summary>
     public long CastSpeed { get; init; }
+    /// <summary>AIConfig _iIsSurround 1: metres between the attackers' slots around a player (_iSurroundDistance cm);
+    /// 0: a straight approach (MonsterService.Surround).</summary>
+    public float SurroundDistance { get; init; }
+    /// <summary>AIConfig _iBattleCallType 1: how far (m) it calls its kind into the fight it enters; 0 calls no one.</summary>
+    public float BattleCallRange { get; init; }
+    /// <summary>AIConfig _iBattleCallResponse 1: it answers such a call.</summary>
+    public bool AnswersBattleCall { get; init; }
 }
 
-/// <summary>A live monster on a map (entityType 1): HP, home point, current walk segment and AI state.</summary>
-public sealed class MonsterUnit : WorldUnit
+/// <summary>A live monster on a map (entityType 1): HP, home point, current walk segment and AI state. The siege war
+/// machines derive from it (TerritoryWarsService.CannonUnit, VehicleUnit): they take damage and die as monsters do.</summary>
+public class MonsterUnit : WorldUnit
 {
-    public required MonsterTemplate Template { get; init; }
+    /// <summary>Its kind's stats; GmSetEntityAttr swaps in a changed copy for this one unit.</summary>
+    public required MonsterTemplate Template { get; set; }
     /// <summary>Instance-specific final outgoing damage rate; 10000 leaves field and dungeon monsters unchanged.</summary>
     public int DamageRatio { get; init; } = 10000;
     public required SpawnGroup Group { get; init; }
@@ -62,6 +71,10 @@ public sealed class MonsterUnit : WorldUnit
     public long NextSwingMs { get; set; }
     public long NextChaseMs { get; set; }
     public bool Returning { get; set; }
+    /// <summary>Back home it keeps its damage instead of healing to full (the siege castle, TerritoryWarsService.SiegeObjects).</summary>
+    public bool KeepsDamage { get; set; }
+    /// <summary>It never takes a target, so it neither locks nor chases anybody (the siege castle's AIConfig _iCanInBattle 0).</summary>
+    public bool StaysOutOfBattle { get; set; }
     public long LastCombatMs { get; set; }
     /// <summary>Boss special-skill scheduler state, created when the boss first engages (MonsterService.BossSkills).</summary>
     public BossSkillRuntime? BossSkills { get; set; }
