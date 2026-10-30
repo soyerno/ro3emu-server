@@ -79,7 +79,12 @@ public static class ServerHost
         builder.Services.AddSingleton<AwardService>();
         builder.Services.AddSingleton<DailyActivityService>();
         builder.Services.AddSingleton<ActivityClock>();
-        builder.Services.AddSingleton<NewActivityService>();
+        builder.Services.AddSingleton(sp =>
+        {
+            var activities = ActivatorUtilities.CreateInstance<NewActivityService>(sp);
+            activities.Rates = sp.GetRequiredService<ServerRates>();
+            return activities;
+        });
         builder.Services.AddSingleton<TimedEventService>();
         builder.Services.AddSingleton<TimedTodoSchedule>();
         builder.Services.AddSingleton<PronteraDefenseService>();
@@ -158,7 +163,12 @@ public static class ServerHost
         builder.Services.AddSingleton<AppraisalService>();
         builder.Services.AddSingleton<EnchantService>();
         builder.Services.AddSingleton<PetFollowerService>();
-        builder.Services.AddSingleton<PetService>();
+        builder.Services.AddSingleton(sp =>
+        {
+            var pets = ActivatorUtilities.CreateInstance<PetService>(sp);
+            pets.Rates = sp.GetRequiredService<ServerRates>();
+            return pets;
+        });
         builder.Services.AddSingleton<TrafficLog>();
         builder.Services.AddSingleton<MsgCatalog>();
         builder.Services.AddSingleton<IAoiSink, GameAoiSink>();

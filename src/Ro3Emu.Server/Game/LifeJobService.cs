@@ -42,9 +42,14 @@ public sealed partial class LifeJobService
         public int FoodBook { get; set; }
     }
 
+    /// <summary>Konsor rates (not original): life_exp.</summary>
+    internal ServerRates Rates { get; }
+
     public LifeJobService(GameData data, CharacterService character, FunctionService functions, SeasonService seasons,
-        AwardService awards, RoleStore roles, GameLoop loop, TimeProvider clock, SceneService scene, ILogger<LifeJobService> log)
+        AwardService awards, RoleStore roles, GameLoop loop, TimeProvider clock, SceneService scene, ILogger<LifeJobService> log,
+        ServerRates? rates = null)
     {
+        Rates = rates ?? new ServerRates();
         this._data = data; this._character = character; this._functions = functions; this._seasons = seasons;
         this._awards = awards; this._roles = roles; this._loop = loop; this._clock = clock; this._log = log;
         character.LifeItemUse = UseLifeItemAsync;
@@ -573,10 +578,13 @@ public sealed partial class LifeJobService
         runtime.EnergySpent = checked(runtime.EnergySpent + amount);
     }
 
-    /// <summary>Current row's next threshold and current row's base-level gate (LC_LifeJobHelper.CheckJobLevelUpCondition).</summary>
+    /// <summary>
+    /// Current row's next threshold and current row's base-level gate (LC_LifeJobHelper.CheckJobLevelUpCondition).
+    /// Konsor life_exp (not original) scales every gain, gathering and forging alike; a 0 (level reconcile) stays 0.
+    /// </summary>
     private void AddExp(GameSession s, DBLifeJobInfo next, long job, long gain)
     {
-        var info = next.LifeJobInfoMap[job]; info.JobExp = checked(info.JobExp + gain);
+        var info = next.LifeJobInfoMap[job]; info.JobExp = checked(info.JobExp + Rates.Current.LifeJobExp(gain));
         var rows = _data.Table("LifeJobLevelConfig").Values.Where(r => Current(r) && GameData.Int(r, "_iJobId") == job)
             .ToDictionary(r => GameData.Int(r, "_iLevel"));
         while (rows.TryGetValue(info.JobLevel, out var row) && rows.ContainsKey(info.JobLevel + 1)

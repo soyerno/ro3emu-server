@@ -36,8 +36,13 @@ public sealed partial class EquipmentService
     // Likewise for the craft quality draw (a roll in [0, total weight)).
     internal Func<long, long> CraftRoll { get; set; } = bound => Random.Shared.NextInt64(bound);
 
-    public EquipmentService(GameData data, CharacterService character, FunctionService functions, ItemStore items, RoleStore roles, ILogger<EquipmentService> log)
+    /// <summary>Konsor rates (not original): refine_success and craft_quality.</summary>
+    internal ServerRates Rates { get; }
+
+    public EquipmentService(GameData data, CharacterService character, FunctionService functions, ItemStore items, RoleStore roles, ILogger<EquipmentService> log,
+        ServerRates? rates = null)
     {
+        Rates = rates ?? new ServerRates();
         this._data = data;
         this._character = character;
         this._functions = functions;
@@ -128,7 +133,8 @@ public sealed partial class EquipmentService
             var nextLevels = CopyLevels(levels);
             if (error == null)
             {
-                long chance = GameData.Int(row!.Value, "_iSuccess") + luck + bonus;
+                // Konsor refine_success scales the table chance only; luck and the Legend Ore bonus are added unscaled.
+                long chance = Rates.Current.RefineChance(GameData.Int(row!.Value, "_iSuccess"), luck, bonus);
                 successRoll = RefineRoll(10000);
                 success = successRoll < chance;
                 if (success)
@@ -223,7 +229,7 @@ public sealed partial class EquipmentService
 
     // ---- craft ----
 
-    private const int QualityOrange = 5, QualityRed = 6;
+    internal const int QualityOrange = 5, QualityRed = 6;
 
     /// <summary>
     /// 31409: EquipCraftConfig[rank, subtype] pays _kCost and makes one of _kQualityEquipID, drawn by
@@ -250,8 +256,9 @@ public sealed partial class EquipmentService
             made = null;
             if (error == null)
             {
+                var rates = Rates.Current;
                 var outputs = Pairs(recipe, "_kQualityEquipID") // [quality, item]
-                    .Select(o => (Quality: o.Entry, Entry: (int)o.Count, Weight: WeightOf(req.Rank, o.Entry))).ToList();
+                    .Select(o => (Quality: o.Entry, Entry: (int)o.Count, Weight: QualityWeight(rates, o.Entry, WeightOf(req.Rank, o.Entry)))).ToList();
                 int recipeId = (int)GameData.Int(recipe, "_iID");
                 var counter = session.EquipmentPlans.CraftInfo.TryGetValue(recipeId, out var held) ? held.Clone()
                     : new DBEquipCraftInfo { Rank = req.Rank, EquipType = req.Subtype };
@@ -305,6 +312,13 @@ public sealed partial class EquipmentService
         info.CraftInfo[recipeId] = counter.Clone();
         info.CraftRankCount[counter.Rank] = info.CraftRankCount.GetValueOrDefault(counter.Rank) + counter.CraftCount - previous;
     }
+
+    /// <summary>
+    /// Konsor craft_quality (not original): the draw weight of an orange-or-better quality (QualityOrange, as the orange
+    /// pity uses it) is scaled; lower qualities and the pity thresholds are not.
+    /// </summary>
+    internal static long QualityWeight(ServerRates.Values rates, long quality, long weight) =>
+        quality >= QualityOrange ? rates.CraftWeight(weight) : weight;
 
     private long WeightOf(int rank, long quality) =>
         _data.Table("EquipCraftQualityConfig").Values.Where(r => GameData.Int(r, "_iRank") == rank && GameData.Int(r, "_iQuality") == quality)

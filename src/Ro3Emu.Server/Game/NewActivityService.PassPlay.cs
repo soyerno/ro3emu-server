@@ -19,6 +19,9 @@ public sealed partial class NewActivityService
     /// <summary>60 levels of 2000 in about six and a half weeks of regular play.</summary>
     private const double PacePerDay = 120_000 / 45.5;
 
+    /// <summary>Konsor rates (not original): pass_exp (ServerHost sets the shared instance).</summary>
+    internal ServerRates Rates { get; set; } = new();
+
     internal enum PassGoal { Kills, PartyKills, Liveness, Dungeons, Mvps, Quests, LoginDays }
 
     internal sealed record PassChallenge(string Id, string Text, PassGoal Goal, long Target);
@@ -269,7 +272,9 @@ public sealed partial class NewActivityService
             double days = Math.Max(1, (Now - info.CycleStartTime) / 86400.0);
             if (play.Instance != info.ActivityInstance) { play.Instance = info.ActivityInstance; play.Earned = 0; play.Overflow = 0; }
             if (play.Earned < days * PacePerDay * 0.75) multiplier *= 2; // catching up
-            long exp = (long)Math.Round((baseExp + challengeExp) * multiplier);
+            // Konsor pass_exp scales the final grant, after the party and catch-up bonuses (Earned and the overflow
+            // chests count what is actually granted).
+            long exp = Rates.Current.PassPlayExp((long)Math.Round((baseExp + challengeExp) * multiplier));
             play.Earned += exp;
             var pass = info.ActivityParam.BattlePass;
             if (PassConfig(passId) is { } config && pass.Level >= GameData.Int(config, "_iMaxLevel"))
@@ -286,7 +291,7 @@ public sealed partial class NewActivityService
         }
         if (quest != 0 && ActivityError(session, 9201, 23) == 0 && _data.Row("TaskConfig", quest) is { } task
             && GameData.Int(task, "_iTaskType") == 1)
-            grants.Add(new AwardGrant(NovicePassExpCurrency, (int)NoviceQuestExp));
+            grants.Add(new AwardGrant(NovicePassExpCurrency, checked((int)Rates.Current.PassPlayExp(NoviceQuestExp))));
 
         if (grants.Count == 0)
         {

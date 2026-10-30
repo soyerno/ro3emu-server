@@ -4,20 +4,34 @@ namespace Ro3Emu.Server.Game;
 /// Konsor server rates (not original behavior: the client has no rate setting). The admin panel writes them to the
 /// konsor_rate table of the realm database and <see cref="ServerRatesReader"/> re-reads it; a missing table or row is
 /// 1.0, every value is clamped to 0.1-10.0. At 1.0 each scale returns its input unchanged.
-/// Rounding: a scaled amount is floor(amount x rate) in decimal arithmetic, at least 1 when the amount is positive.
+/// Rounding: a scaled amount is floor(amount x rate) in decimal arithmetic, at least 1 when the amount is positive; a
+/// scaled draw weight follows the same rule, so a weight of 0 (never drawn) stays 0.
 /// </summary>
 public sealed class ServerRates
 {
     public const string BaseExpName = "base_exp", JobExpName = "job_exp", QuestExpName = "quest_exp", DropName = "drop",
-        ZenyName = "zeny";
+        ZenyName = "zeny", RefineSuccessName = "refine_success", CraftQualityName = "craft_quality",
+        EggQualityName = "egg_quality", CardDropName = "card_drop", EquipDropName = "equip_drop", MvpDropName = "mvp_drop",
+        LifeExpName = "life_exp", PassExpName = "pass_exp";
     public const double Min = 0.1, Max = 10.0, Default = 1.0;
     /// <summary>ItemConfig 1 is Zeny (CharacterService.ZenyId; RoleStore's currency map, 1 = Zeny).</summary>
     public const int ZenyItem = 1;
     /// <summary>DropPoolConfig slot chances are per million (RewardService.RollPool).</summary>
     public const double ChanceScale = 1_000_000;
+    /// <summary>A refine succeeds when EquipmentService.RefineRoll(10000) is below the chance: 10000 is certain.</summary>
+    public const long RefineCertain = 10_000;
+
+    /// <summary>
+    /// What a DropGroupConfig group can yield (RewardService.ClassifyGroup): only cards, only equipment, or anything
+    /// else. card_drop / equip_drop apply to the first two on top of the general drop factor.
+    /// </summary>
+    public enum DropKind { Mixed, Card, Equipment }
 
     /// <summary>One consistent set of rates; a reward resolution reads one snapshot.</summary>
-    public sealed record Values(double BaseExp, double JobExp, double QuestExp, double Drop, double Zeny)
+    /// <summary>One consistent set of rates; a reward resolution reads one snapshot.</summary>
+    public sealed record Values(double BaseExp, double JobExp, double QuestExp, double Drop, double Zeny,
+        double RefineSuccess = 1.0, double CraftQuality = 1.0, double EggQuality = 1.0, double CardDrop = 1.0,
+        double EquipDrop = 1.0, double MvpDrop = 1.0, double LifeExp = 1.0, double PassExp = 1.0)
     {
         public static Values Default { get; } = new(1.0, 1.0, 1.0, 1.0, 1.0);
 
@@ -27,8 +41,18 @@ public sealed class ServerRates
         /// <summary>Quest, task and award EXP (Base and Job alike) by quest_exp.</summary>
         public long AwardExp(long exp) => Scale(exp, QuestExp);
 
-        /// <summary>A drop slot's chance per million by drop, capped at certainty; never more rolls.</summary>
-        public double DropChance(double chance) => Drop == 1.0 ? chance : Math.Min(ChanceScale, chance * Drop);
+        /// <summary>
+        /// A drop slot's chance per million by drop, and also by card_drop / equip_drop when its group yields only cards
+        /// / only equipment; capped at certainty, never more rolls.
+        /// </summary>
+        public double DropChance(double chance, DropKind kind = DropKind.Mixed)
+        {
+            double factor = Drop * kind switch { DropKind.Card => CardDrop, DropKind.Equipment => EquipDrop, _ => 1.0 };
+            return factor == 1.0 ? chance : Math.Min(ChanceScale, chance * factor);
+        }
+
+        /// <summary>MVP and Monster Hunt awards (RewardService.RollAward): mvp_drop takes the place of drop.</summary>
+        public Values ForAward() => this with { Drop = MvpDrop };
 
         /// <summary>Zeny entries added to <paramref name="drops"/> from index <paramref name="from"/> on, by zeny.</summary>
         public void ScaleZeny(List<(int Entry, int Count)> drops, int from)
@@ -37,6 +61,25 @@ public sealed class ServerRates
             for (int i = from; i < drops.Count; i++)
                 if (drops[i].Entry == ZenyItem) drops[i] = (ZenyItem, Scale(drops[i].Count, Zeny));
         }
+
+        /// <summary>
+        /// A refine's chance per ten thousand: the table's _iSuccess by refine_success, then the saved luck and the Legend
+        /// Ore bonus unscaled, capped at certainty. At 1.0 the sum is returned as is (the roll is below 10000 either way).
+        /// </summary>
+        public long RefineChance(long tableChance, long luck, long bonus) => RefineSuccess == 1.0 ? tableChance + luck + bonus
+            : Math.Min(RefineCertain, Scale(tableChance, RefineSuccess) + luck + bonus);
+
+        /// <summary>The draw weight of an orange-or-better craft quality, by craft_quality.</summary>
+        public long CraftWeight(long weight) => Scale(weight, CraftQuality);
+
+        /// <summary>The draw weight of an S-class incubation outcome, by egg_quality.</summary>
+        public long EggWeight(long weight) => Scale(weight, EggQuality);
+
+        /// <summary>Life-job EXP, by life_exp.</summary>
+        public long LifeJobExp(long exp) => Scale(exp, LifeExp);
+
+        /// <summary>Battle and novice pass EXP, by pass_exp.</summary>
+        public long PassPlayExp(long exp) => Scale(exp, PassExp);
     }
 
     private Values _current = Values.Default;
@@ -48,7 +91,8 @@ public sealed class ServerRates
     {
         double Rate(string name) => rows.TryGetValue(name, out var value) ? Clamp(value) : Default;
         Volatile.Write(ref _current, new Values(Rate(BaseExpName), Rate(JobExpName), Rate(QuestExpName), Rate(DropName),
-            Rate(ZenyName)));
+            Rate(ZenyName), Rate(RefineSuccessName), Rate(CraftQualityName), Rate(EggQualityName), Rate(CardDropName),
+            Rate(EquipDropName), Rate(MvpDropName), Rate(LifeExpName), Rate(PassExpName)));
     }
 
     /// <summary>0.1-10.0; a non-finite value counts as unset.</summary>
