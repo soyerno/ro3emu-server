@@ -26,6 +26,8 @@ public sealed class RewardService
     private readonly Random _random = new();
     private Dictionary<int, long>? _expCorrection;
     private readonly DropAttenuation _attenuation;
+    /// <summary>Konsor rates (not original): kill EXP, monster drop chances and kill-pool Zeny.</summary>
+    internal ServerRates Rates { get; }
 
     /// <summary>Field AFK selects the enhanced _iDrop table only for qualified ordinary field kills.
     /// Other kills use environment 0, preserving ordinary rewards (localization 10960000077; mapping inferred).</summary>
@@ -38,8 +40,10 @@ public sealed class RewardService
     /// <summary>Monster Hunt: its kill counters join the kill's own transaction, after the AFK child (MonsterHuntService).</summary>
     internal Action<GameSession, MonsterUnit, RewardSettlement>? StageHuntKill { get; set; }
 
-    public RewardService(CombatService combat, CharacterService character, TeamService teams, GameData data, ILogger<RewardService> log)
+    public RewardService(CombatService combat, CharacterService character, TeamService teams, GameData data, ILogger<RewardService> log,
+        ServerRates? rates = null)
     {
+        Rates = rates ?? new ServerRates();
         this._character = character;
         this._teams = teams;
         this._data = data;
@@ -144,13 +148,14 @@ public sealed class RewardService
         if (player.DungeonAttempt is { Plan.Multi: not null } dungeon && monster.InstanceId == dungeon.Room.Id)
             return ([], 0, 0);
         if (_data.Row("NPCConfig", monster.Template.NpcId) is not { } npc) return ([], 0, 0);
+        var rates = Rates.Current;
         var drops = new List<(int Entry, int Count)>();
         // (inferred) NPCDropConfig environment 0 is reduced and 1 is Bonus Time: the former carries
         // small EXP at player levels 1-99, the latter larger EXP. Fatigue environment 2 has no proven trigger.
         // _iNormalDrop remains additive under its own level/map conditions; no numeric multiplier is invented.
         if (Resolve(GameData.Int(npc, "_iDrop")) is var dropId and > 0 && _data.Row("NPCDropConfig", dropId) is { } nd
             && nd.ValueKind == JsonValueKind.Object && nd.TryGetProperty(bonus ? "1" : "0", out var env))
-            RollPools(env, player, drops, monster.Template.Level);
+            RollPools(env, player, drops, monster.Template.Level, rates);
         if (npc.TryGetProperty("_iNormalDrop", out var normals) && normals.ValueKind == JsonValueKind.Array)
         {
             foreach (var n in normals.EnumerateArray())
@@ -159,7 +164,7 @@ public sealed class RewardService
                 if (row.TryGetProperty("_iMapId", out var maps) && maps.ValueKind == JsonValueKind.Array && maps.GetArrayLength() > 0
                     && !maps.EnumerateArray().Any(m => GameData.Number(m) == player.SceneEntry))
                     continue;
-                RollPools(row, player, drops, monster.Template.Level);
+                RollPools(row, player, drops, monster.Template.Level, rates);
             }
         }
 
@@ -172,8 +177,10 @@ public sealed class RewardService
             baseExp = baseExp * Correction((int)Math.Clamp(gap, -200, 200)) / 10000;
             baseExp = Math.Max(1, baseExp * _teams.ExpBonus(player) / 10000);
         }
+        // Konsor rates scale the corrected EXP: Base EXP by base_exp, Job EXP (equal before scaling) by job_exp.
+        var (rateBase, rateJob) = rates.KillExp(baseExp);
         // BaseExpAddConfig catch-up below the server level raises Base EXP only (CharacterService.LevelRules).
-        return (items, _character.WithPursueBonus(player.Progress!.Level, baseExp), baseExp);
+        return (items, _character.WithPursueBonus(player.Progress!.Level, rateBase), rateJob);
     }
 
     private async Task KilledAsync(GameSession player, MonsterUnit monster)
@@ -243,24 +250,28 @@ public sealed class RewardService
     /// independently (MVP first-strike pool 21001 = [2020, 100%, 30, 1] = 30 x 1000 Minted Coin).
     /// </summary>
     /// <summary>A kill's pools: <paramref name="monsterLevel"/> is the slain monster's level (DropAttenuationConfig).</summary>
-    private void RollPools(JsonElement row, GameSession player, List<(int, int)> drops, int monsterLevel)
+    private void RollPools(JsonElement row, GameSession player, List<(int, int)> drops, int monsterLevel, ServerRates.Values rates)
     {
         foreach (var p in row.EnumerateObject().Where(p => p.Name.StartsWith("_iDropPool", StringComparison.Ordinal)))
-            if (GameData.Number(p.Value) is { } poolId) RollPool((long)poolId, player.Progress!, drops, null, monsterLevel);
+            if (GameData.Number(p.Value) is { } poolId) RollPool((long)poolId, player.Progress!, drops, null, monsterLevel, rates);
     }
 
-    private void RollPool(long poolId, GameSession player, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null)
-        => RollPool(poolId, player.Progress!, drops, bound);
-
+    /// <summary>
+    /// <paramref name="rates"/> is set for monster drops only (kill pools and <see cref="RollAward"/>): Konsor rates
+    /// scale each slot's chance and the Zeny the pool yields. Other draws (boxes, stages, auctions, life skills) keep
+    /// their configured chances.
+    /// </summary>
     private void RollPool(long poolId, RoleProgress progress, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null,
-        int monsterLevel = DropAttenuation.NoMonster)
+        int monsterLevel = DropAttenuation.NoMonster, ServerRates.Values? rates = null)
     {
         if (_data.Row("DropPoolConfig", poolId) is not { } pool) return;
+        int first = drops.Count;
         for (int slot = 1; slot <= 16; slot++)
         {
             if (!pool.TryGetProperty($"_iDropGroup_{slot}", out var g) || g.ValueKind != JsonValueKind.Array || g.GetArrayLength() < 2) continue;
             long group = (long)(GameData.Number(g[0]) ?? 0);
             double chance = GameData.Number(g[1]) ?? 0;
+            if (rates != null) chance = rates.DropChance(chance);
             int rolls = g.GetArrayLength() >= 3 ? Math.Clamp((int)(GameData.Number(g[2]) ?? 1), 1, 1000) : 1;
             int picks = g.GetArrayLength() >= 4 ? Math.Max(1, (int)(GameData.Number(g[3]) ?? 1)) : 1;
             if (poolId is 31121 or 31491 or 32106 || group is 121121 or 121122 or 121123) picks = 1;
@@ -270,18 +281,19 @@ public sealed class RewardService
                 for (int i = 0; i < picks; i++) PickFromGroup(group, progress, drops, bound, monsterLevel);
             }
         }
+        rates?.ScaleZeny(drops, first);
     }
 
     /// <summary>
     /// An award id (MultiverseGroupConfig → AwardConfig[0]._iDropPool → DropPoolConfig), rolled for this player;
-    /// same item ids merged. Used for MVP rewards.
+    /// same item ids merged. Used for MVP rewards and Monster Hunt area drops, so the Konsor drop and Zeny rates apply.
     /// </summary>
     public List<(int Entry, int Count)> RollAward(long multiverseId, GameSession player)
     {
         var drops = new List<(int, int)>();
         if (Resolve(multiverseId) is var awardId and > 0 && _data.Row("AwardConfig", awardId) is { ValueKind: JsonValueKind.Array } rows
             && rows.GetArrayLength() > 0 && GameData.Int(rows[0], "_iDropPool") is var pool and > 0)
-            RollPool(pool, player, drops);
+            RollPool(pool, player.Progress!, drops, rates: Rates.Current);
         return drops.GroupBy(d => d.Item1).Select(g => (g.Key, g.Sum(d => d.Item2))).ToList();
     }
 

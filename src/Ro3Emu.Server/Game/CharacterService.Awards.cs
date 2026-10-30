@@ -13,6 +13,9 @@ public sealed partial class CharacterService
 {
     // ---- bag: grants and award application ----
 
+    /// <summary>Konsor rates (not original); the host injects its shared instance, standalone use stays at 1.0.</summary>
+    public ServerRates Rates { get; set; } = new();
+
     /// <summary>Adds items (or a currency, or exp for the virtual items 100/101) and tells the client.</summary>
     public async Task<string> AddItemAsync(GameSession session, int entry, int count)
     {
@@ -231,6 +234,7 @@ public sealed partial class CharacterService
         }
         // Quest award auto returns are staged alongside the source grant, costs, tasks and daily state.
         // Other ApplyAward callers have no quest delivery boundary and retain their standalone behavior.
+        (baseExp, jobExp) = AwardExpAtRate(baseExp, jobExp, ownedAward);
         var decomposed = deliveredTaskState == null && ownedAward?.CommandKind != "cd13e/grant" ? new ItemAutoDecomposeTipsNtf()
             : StageAutoDecomposeAward(session, items, staged, received, beforeGrants, gained);
         AddVirtualReward(notification, BaseExpItem, baseExp);
@@ -357,6 +361,17 @@ public sealed partial class CharacterService
         foreach (var (entry, count) in gained) foreach (var handler in ItemGained) handler(session, entry, count);
         foreach (var handler in StateChanged) handler(session);
         return true;
+    }
+
+    /// <summary>
+    /// Konsor quest_exp rate (not original): quest, task and award EXP, Base and Job alike. GM grants
+    /// (cd13e/grant, cd13e/gm-grant) keep the exact amount the GM asked for.
+    /// </summary>
+    private (long Base, long Job) AwardExpAtRate(long baseExp, long jobExp, OwnedAwardSource? ownedAward)
+    {
+        if (ownedAward?.CommandKind is "cd13e/grant" or "cd13e/gm-grant") return (baseExp, jobExp);
+        var rates = Rates.Current;
+        return (rates.AwardExp(baseExp), rates.AwardExp(jobExp));
     }
 
     private void ApplyExp(RoleProgress p, long baseExp, long jobExp)

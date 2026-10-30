@@ -57,7 +57,16 @@ public static class ServerHost
         builder.Services.AddSingleton<AuctionStore>();
         builder.Services.AddSingleton<GuildStore>();
         builder.Services.AddSingleton<ItemStore>();
-        builder.Services.AddSingleton<CharacterService>();
+        // Konsor rates (konsor_rate in the realm database, written by the admin panel), re-read every 30 s.
+        builder.Services.AddSingleton<ServerRates>();
+        builder.Services.AddSingleton<IServerRatesSource, SqliteServerRatesSource>();
+        builder.Services.AddHostedService<ServerRatesReader>();
+        builder.Services.AddSingleton(sp =>
+        {
+            var character = ActivatorUtilities.CreateInstance<CharacterService>(sp);
+            character.Rates = sp.GetRequiredService<ServerRates>();
+            return character;
+        });
         builder.Services.AddSingleton<SkillService>();
         builder.Services.AddSingleton<FunctionService>();
         builder.Services.AddSingleton<ReconstructedDungeons>();
