@@ -82,7 +82,9 @@ public static partial class EconomySnapshotReader
     // leave the warehouse by being built on a war map; WartimeSlots are operator permissions and WartimePrepay the
     // machines a member reserved for the blueprint they place. No balance and no asset: machines never reach a bag, a
     // purse or a trade.
-    public const string ExpectedFormatManifestHash = "BA5E8395604B3C714F797006E333C5049C1890E5468ED623A68D953FB65ED5E7";
+    // Wild AFK: role.wild_afk WildAfkService.State.GmUnlocked is a GM unlock marker (!afkunlock, a GM aid) that keeps
+    // function 18 open for the role. No balance and no asset: it only gates the OnHook requests.
+    public const string ExpectedFormatManifestHash = "7C2BFAC08784D5A01C6086B547AC38E79680E0FC0CA7A2067DEBB9ECFA1401CA";
     public static string FormatManifestHash => State.FormatManifestHash;
 
     private sealed partial class State

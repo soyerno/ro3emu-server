@@ -59,8 +59,12 @@ public sealed class FunctionService
         return info;
     }
 
-    /// <summary>A FunctionConfig row's open condition holds (a function without a row is not gated).</summary>
-    public bool IsOpen(GameSession session, long functionId)
+    /// <summary>A FunctionConfig row's open condition holds (a function without a row is not gated), or a GM unlock.</summary>
+    public bool IsOpen(GameSession session, long functionId) =>
+        GmOpened?.Invoke(session, functionId) == true || ConfigOpen(session, functionId);
+
+    /// <summary><see cref="IsOpen"/> without a persisted GM unlock (<see cref="GmOpened"/>).</summary>
+    public bool ConfigOpen(GameSession session, long functionId)
     {
         if (session.GmAllFunctionsOpen) return true; // GM panel openallfunc (GmCommands.Presets)
         // Function 1003 has parent 10 and delivered-task gate 10103160.
@@ -74,6 +78,12 @@ public sealed class FunctionService
         if (_seasons.OpenContent.Forces(functionId)) return true;
         return _data.Row("FunctionConfig", functionId) is not { } row || ConditionMet(session, GameData.Int(row, "_kOpenCondition"));
     }
+
+    /// <summary>
+    /// GM aid, not original behavior: a service that keeps a GM unlock of its own function (WildAfkService's
+    /// !afkunlock) opens it here, so 5056 and every IsOpen check agree.
+    /// </summary>
+    public Func<GameSession, long, bool>? GmOpened { get; set; }
 
     /// <summary>
     /// A service that owns the meaning of particular condition ids (AdventureGroupService: the group quests' 88000081-85,
