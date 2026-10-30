@@ -48,14 +48,41 @@ public sealed partial class GiftCodeService(AccountStore accounts, RoleStore rol
         }
     }
 
-    private async Task<GiftCodeAnswer> RedeemCoreAsync(GiftCodeRequest request)
+    /// <summary>
+    /// Konsor addition (not original): a redemption for <paramref name="account"/>, a login name the Konsor website
+    /// backend vouches for (POST /ro3emu/account/redeem-gift) instead of an engine sign. The account must exist and not
+    /// be banned (else 1962, as for a credential); from there on it is the client's redemption, rate limit included.
+    /// </summary>
+    public async Task<GiftCodeAnswer> RedeemForAccountAsync(string account, string? roleId, string? code)
     {
-        if (await AccountAsync(request) is not { } account) return Answer(ErrorCodes.GiftCardBadCredentials);
+        ArgumentNullException.ThrowIfNull(account);
+        try
+        {
+            var credentials = await accounts.ReadAsync<AccountCredentials?>(new AccountCredentialsRead(account));
+            if (await accounts.UnlessBannedAsync(credentials?.Name, "site gift code") is not { } stored)
+                return Answer(ErrorCodes.GiftCardBadCredentials);
+            return await RedeemAsAsync(stored, roleId, code);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            LogRequestFailed(log, e, code ?? "");
+            return Answer(ErrorCodes.GiftCardFailed);
+        }
+    }
+
+    private async Task<GiftCodeAnswer> RedeemCoreAsync(GiftCodeRequest request) =>
+        await AccountAsync(request) is { } account
+            ? await RedeemAsAsync(account, request.RoleId, request.Code)
+            : Answer(ErrorCodes.GiftCardBadCredentials);
+
+    /// <summary>Everything after the account is established: the account budget, the role, the code and the grant.</summary>
+    private async Task<GiftCodeAnswer> RedeemAsAsync(string account, string? roleId, string? text)
+    {
         // (inferred) The account budget counts only authenticated attempts, so a wrong token naming someone else's
         // account cannot use up that account's attempts; unauthenticated guessing is bounded by the address budget.
         if (!limiter.TryAcquire(null, account)) return Answer(ErrorCodes.GiftCardRateLimited);
-        if (await RoleAsync(request.RoleId, account) is not { } role) return Answer(ErrorCodes.GiftCardRoleNotOwned);
-        string code = request.Code?.Trim() ?? "";
+        if (await RoleAsync(roleId, account) is not { } role) return Answer(ErrorCodes.GiftCardRoleNotOwned);
+        string code = text?.Trim() ?? "";
         if (code.Length is 0 or > MaxCodeLength) return Answer(ErrorCodes.GiftCardUnknown);
         if (await accounts.ReadGiftCodeAsync(code, account) is not { } state) return Answer(ErrorCodes.GiftCardUnknown);
         if (state.Refusal(clock.GetUtcNow().ToUnixTimeSeconds()) is { } refusal) return Answer(refusal);
