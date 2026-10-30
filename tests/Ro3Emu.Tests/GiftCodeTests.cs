@@ -43,7 +43,7 @@ public sealed class GiftCodeTests(GiftCodeTests.HostFixture fixture) : IClassFix
     }
 
     /// <summary>A gift_code row as the panel inserts it (its own connection, no server code).</summary>
-    private static void Panel(SyntheticHost host, string code, string items, int maxUses = 0, int perAccount = 1,
+    internal static void Panel(SyntheticHost host, string code, string items, int maxUses = 0, int perAccount = 1,
         long? starts = null, long? expires = null, int disabled = 0)
     {
         using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "ro3emu.db")};Pooling=False");
@@ -63,7 +63,7 @@ public sealed class GiftCodeTests(GiftCodeTests.HostFixture fixture) : IClassFix
         cmd.ExecuteNonQuery();
     }
 
-    private static long Scalar(SyntheticHost host, string sql, params (string Name, object Value)[] parameters)
+    internal static long Scalar(SyntheticHost host, string sql, params (string Name, object Value)[] parameters)
     {
         using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "ro3emu.db")};Pooling=False");
         db.Open();

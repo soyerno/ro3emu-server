@@ -63,6 +63,22 @@ meantime rolls the mail back.
 The mail's title is "Gift code reward" and its body is "Here are the rewards of gift code \<code\>." It expires after
 the default 30 days for raw mail with an attachment.
 
+## Website redemption (Konsor addition)
+
+Not original: the client has no such request. The Konsor website lets a signed-in player redeem a code from their
+account page for one of their characters. Its backend, on the same machine, calls
+`POST /ro3emu/account/redeem-gift` on the HTTP port.
+
+- Loopback callers only; any other caller gets 404.
+- Option `Ro3Emu:SiteApiKey` (default empty) holds a shared secret. While it is empty the endpoint answers 404. The
+  request must send it in the header `X-Ro3Emu-Site-Key`, compared in constant time; a wrong or missing key is 403.
+- Form fields: `account` (the login name, matched in any letter case like a login), `role_id` and `code`. A body that
+  is not a form, or a missing or invalid field, is 400 with `{code: 1961, message}`.
+- Otherwise HTTP 200 with the same JSON and the same codes as above, and the same rules from step 2 on, the
+  per-account rate limit included. The account replaces step 1: it must exist and not be banned, else 1962.
+- The website takes the account from its own session, never from the player's request. Give its backend the same
+  secret as `Ro3Emu:SiteApiKey`.
+
 ## Database contract for the admin panel
 
 The server creates both tables (`GiftCodeSchemaPlan`).
