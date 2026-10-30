@@ -142,6 +142,12 @@ Reconstructed story encounters (`ReconstructedDungeons`, switch `Ro3Emu:Reconstr
   client; without it a cleared plane left the player in an empty copy of the field (seen on Southern Payon 1021301,
   whose story continues on the field: 10102110 is delivered to NPC 400037 on map 10213). A failed run stays, so the
   client's DungeonReset can retry it.
+- Guide arrows: a solo story scene whose scene editor file has guide routes (`m_kGuidePoints`, e.g. the Culvert
+  plane's 19 and 21, the Geffen field plane's 17) sets dungeon var 10021 `PGuideWayList` to their ids in 30401
+  (`LC_DunGeon_VarDefine.lua:736-741`, processed by `LC_SceneCom_GuideGfx`, which draws each route as the guide arrow
+  line), and to an empty list in a 30404 var change after the clear. **(inferred)**: the scripts that set 10021 are
+  not in the client, so all routes show from the start (a scene's routes chain into one path: the Culvert's 19 ends
+  where 21 starts). `DungeonService.GuideWays`, `SceneEditorGuides`.
 - Solo tuning: the story bosses were built for the original's allied NPC
   companions (mostly not reproduced); untuned, a level-matched player died in 3-36 s and needed 3-38 minutes to win.
   `soloTuning` scales each story template's HP and attack (basis points) so a Swordman at the boss level, every stat
@@ -239,6 +245,23 @@ Reconstructed scripted scenes (`Reconstructed/scripted-scenes.json`, same switch
   actors the server shows (client NPCConfig ids at scene-editor points, entity type 1 or 2 from `_iNPCType`, with the
   buffs that open their interactions), an optional story, the client events that complete it and an optional teleport
   after it. The engine is generic (`DungeonService.Scripted`): nothing knows a scene, task or NPC id.
+  A step may also have a ride (`after.ride`, a `m_kGuidePoints` route): when a player completes it by using an actor,
+  that actor walks the route at its own `UnitConfig._fSpeed` (the Deniro: 5.25 m/s) and the participants are moved
+  with it in 100 ms forced-position steps, then the teleport and the next step follow (`DungeonService.Ride.cs`).
+  **(inferred)**: the client has no ride rule (the route and the scene's camera animation are data with no trigger, and
+  the original's server script is not shipped), so the speed, the step size and the missing mount are guesses and the
+  camera animation (`mianstorybingyicamera`) is not played.
+  A step may also hold (`after.hold`, ms, scaled by `ScriptedScenePacePercent`): once it is completed, the next step or the
+  result waits that long, so what the step showed is not cut. **(inferred)**: the original script is not shipped and the
+  client data has no duration for these, so the airship's holds are estimates (the chitchat's 13 s is the longest of its four
+  bubbles, 12 to 22 words each at `PublicParamConfig.BubblePerWordTime` 2; 2 s between boarding groups, 3 s after the Evil Boss,
+  4.5 s for the captain's closing line). When a scripted scene is settled its defeated enemies keep their bodies and go by their
+  own `_iBodyRemainTime` (Eddga's body stays where it fell); the living ones and the scene actors are cleared as before.
+  An actor interaction whose `NPCInteractConfig._iStatusID` is a vehicle status (the Deniro's first Ride, 5300005)
+  seats the player in the actor's seat through `WorldInteractionService` (32702, seat 32704; the client's exit button
+  works as for any vehicle); the actor puts them down after 2 s (`SeatedRideMs`, **(inferred)**: nothing in the
+  client says how long the first, failing ride lasts) or when they leave the scene. The second Ride (5300008) has no
+  gameplay status, so the player is not seated during the ride to the depths.
 - Client events: 32700 on a scene actor (its own UID namespace) with one of the actor's `_iInteractID`, also counted as
   the dungeon message of that interaction's server-hosted action 210 `SendDungeonMessage` (the client never runs it);
   a walk into a server region (regionType 2; no client consumer registers them, so the client never reports them;
@@ -257,7 +280,7 @@ Reconstructed scripted scenes (`Reconstructed/scripted-scenes.json`, same switch
   route of the message that completed it does not reserve the settlement's role locks. Scene actors are room props
   (`InstanceService.AddPropAsync`), removed at settlement and before the room's final cleanup.
 - Guessed (see each scene's "guessed" list): the corridor region that ends 1000201's first stage, Bobo's place there,
-  the jump and the ride as teleports, no exploding ant eggs, no seamless 1000201 to 1000301 transfer, which bell hides
+  the jump as a teleport, the ride to the depths as a walk of guide route 36 (see below), no exploding ant eggs, no seamless 1000201 to 1000301 transfer, which bell hides
   Katie (from both stories), a wrong guess changing nothing, the instrument retrieved within 4 m of mark point 37.
 - `DungeonTests.Scripted` resolves each scene against the client data, plays each one through its client events (wrong
   and premature events included) to a clear, and checks that the story step is delivered and the next one offered.
@@ -301,3 +324,13 @@ Tests (`DungeonTests`, `TowerTests`, `TowerShopTests`):
   service, enters the real point-respawn scene, kills its NPC through the wire and receives a result. The 4400001
   test spawns its source-backed 50-actor region plan. Separate two-wave execution uses a synthetic host-local
   editor fixture. The exported data is never modified; these tests do not claim complete solo script parity.
+
+## Dungeon task trackers
+
+TaskConfig type 4 (Dungeon) and type 24 (RingTask) son types 2/3 with an `_iDungeonID` are the run's tracker. The
+client shows them only inside that dungeon (`LC_TaskHelper`); they carry no award. `TaskService.DungeonTasks` chains
+each scene's rows by `_kPreTask` and shows the first unmet step as an extra 5027 entry, never stored or delivered.
+DungeonService reports the step: the Dracula lair's wave, the last step (the boss) for a Guild Challenge stage, and
+over at settlement. The siege reports its fight stage, and its 210003/200001 steps read the participant's assists and
+score. A siege assist is a hit on the victim in the 10 s before another participant's kill (inferred, Battle Merit's
+rule). Boneyard and Whaleback Chute (3011111/3011112/3011123/3011124) have trackers but no Guild Challenge entry.
