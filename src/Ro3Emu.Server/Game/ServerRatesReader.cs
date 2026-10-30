@@ -46,7 +46,7 @@ public sealed class SqliteServerRatesSource(AccountStore accounts) : IServerRate
 /// Reads the Konsor rates once at startup and every <see cref="Interval"/> after, so a panel change applies without a
 /// restart. A failed read keeps the last good values and warns once until a read succeeds again.
 /// </summary>
-public sealed class ServerRatesReader(ServerRates rates, IServerRatesSource source, ILogger<ServerRatesReader> log,
+public sealed partial class ServerRatesReader(ServerRates rates, IServerRatesSource source, ILogger<ServerRatesReader> log,
     TimeProvider time) : BackgroundService
 {
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
@@ -59,14 +59,14 @@ public sealed class ServerRatesReader(ServerRates rates, IServerRatesSource sour
         try { rows = source.Read(); }
         catch (Exception error) when (error is SqliteException or InvalidOperationException or IOException or ObjectDisposedException)
         {
-            if (!_failing) log.LogWarning(error, "Server rates could not be read; keeping {Rates}", rates.Current);
+            if (!_failing) LogReadFailed(log, error, rates.Current);
             _failing = true;
             return false;
         }
         _failing = false;
         var before = rates.Current;
         rates.Apply(rows);
-        if (rates.Current != before) log.LogInformation("Server rates now {Rates}", rates.Current);
+        if (rates.Current != before) LogChanged(log, rates.Current);
         return true;
     }
 
@@ -76,4 +76,10 @@ public sealed class ServerRatesReader(ServerRates rates, IServerRatesSource sour
         using var timer = new PeriodicTimer(Interval, time);
         while (await timer.WaitForNextTickAsync(stoppingToken)) Refresh();
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Server rates could not be read; keeping {Rates}")]
+    private static partial void LogReadFailed(ILogger logger, Exception exception, ServerRates.Values rates);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Server rates now {Rates}")]
+    private static partial void LogChanged(ILogger logger, ServerRates.Values rates);
 }
