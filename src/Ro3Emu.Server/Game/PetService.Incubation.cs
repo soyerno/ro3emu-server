@@ -7,6 +7,9 @@ namespace Ro3Emu.Server.Game;
 public sealed partial class PetService
 {
     private long Now => _clock.GetUtcNow().ToUnixTimeSeconds();
+
+    /// <summary>Konsor rates (not original): egg_quality (ServerHost sets the shared instance).</summary>
+    internal ServerRates Rates { get; set; } = new();
     private JsonElement? Room(DBPetInfo state) => _data.Row("PetIncubationRoomConfig", state.IncubationLv);
 
     /// <summary>
@@ -162,7 +165,7 @@ public sealed partial class PetService
             if (!lottery.PityRecords.TryGetValue(key, out pity)) lottery.PityRecords[key] = pity = new LotteryPityRecord();
         }
         bool forced = pity != null && pity.PityCount + 1 >= guarantee;
-        var picked = Roll(forced ? guaranteed : groups) ?? (forced ? Roll(groups) : null);
+        var picked = Roll(forced ? guaranteed : groups, guaranteed) ?? (forced ? Roll(groups, guaranteed) : null);
         if (picked is not { } outcome) return null;
         var (group, type, item, count) = outcome;
         if (pity != null)
@@ -176,16 +179,23 @@ public sealed partial class PetService
         return new DBIncubateInfo { IncubateTime = Now, AwardType = type, AwardId = item, AwardCount = count };
     }
 
-    private (long Group, int Type, int Item, int Count)? Roll(IReadOnlySet<long> groups)
+    /// <summary>
+    /// Konsor egg_quality (not original): rows of the S-class groups (<paramref name="sClass"/>, the draw's
+    /// _kGuaranteedBanner, whose hits reset the pity) weigh their _iWeight by egg_quality; the pity is unchanged.
+    /// </summary>
+    private (long Group, int Type, int Item, int Count)? Roll(IReadOnlySet<long> groups, HashSet<long> sClass)
     {
+        var rates = Rates.Current;
         var rows = _data.Table("DrawPoolConfig").Values.Where(r => groups.Contains(GameData.Int(r, "_iGroupID"))
-            && GameData.Int(r, "_iWeight") > 0 && Outcomes(r).Count > 0).ToList();
-        long total = rows.Sum(r => GameData.Int(r, "_iWeight"));
+            && GameData.Int(r, "_iWeight") > 0 && Outcomes(r).Count > 0)
+            .Select(r => (Row: r, Weight: OutcomeWeight(rates, sClass.Contains(GameData.Int(r, "_iGroupID")), GameData.Int(r, "_iWeight"))))
+            .ToList();
+        long total = rows.Sum(r => r.Weight);
         if (total <= 0) return null;
         long roll = Random.Shared.NextInt64(total);
-        foreach (var row in rows)
+        foreach (var (row, weight) in rows)
         {
-            roll -= GameData.Int(row, "_iWeight");
+            roll -= weight;
             if (roll >= 0) continue;
             var candidates = Outcomes(row);
             var (type, item, count) = candidates[Random.Shared.Next(candidates.Count)];
@@ -193,6 +203,9 @@ public sealed partial class PetService
         }
         return null;
     }
+
+    internal static long OutcomeWeight(ServerRates.Values rates, bool sClass, long weight) =>
+        sClass ? rates.EggWeight(weight) : weight;
 
     private List<(int Type, int Item, int Count)> Outcomes(JsonElement row)
     {

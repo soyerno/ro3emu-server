@@ -18,6 +18,8 @@ public sealed class RewardService
 {
     private const int BaseExpItem = 100, JobExpItem = 101;
     private const int RewardDrop = 8; // ManifestType Drop
+    // ItemConfig._iType / _iSubType of a card (CharacterService.IsCard) and _iType of equipment (CharacterService.IsEquipment).
+    private const int ItemTypeCard = 4, ItemSubTypeCard = 400, ItemTypeEquip = 5;
 
     private readonly CharacterService _character;
     private readonly TeamService _teams;
@@ -26,6 +28,8 @@ public sealed class RewardService
     private readonly Random _random = new();
     private Dictionary<int, long>? _expCorrection;
     private readonly DropAttenuation _attenuation;
+    /// <summary>ClassifyGroup per DropGroupConfig id (the table does not change while the server runs).</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, ServerRates.DropKind> _groupKinds = new();
     /// <summary>Konsor rates (not original): kill EXP, monster drop chances and kill-pool Zeny.</summary>
     internal ServerRates Rates { get; }
 
@@ -258,7 +262,8 @@ public sealed class RewardService
 
     /// <summary>
     /// <paramref name="rates"/> is set for monster drops only (kill pools and <see cref="RollAward"/>): Konsor rates
-    /// scale each slot's chance and the Zeny the pool yields. Other draws (boxes, stages, auctions, life skills) keep
+    /// scale each slot's chance (also by card_drop / equip_drop when its group yields only cards / only equipment) and
+    /// the Zeny the pool yields. Other draws (boxes, stages, auctions, life skills) keep
     /// their configured chances.
     /// </summary>
     private void RollPool(long poolId, RoleProgress progress, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null,
@@ -271,7 +276,7 @@ public sealed class RewardService
             if (!pool.TryGetProperty($"_iDropGroup_{slot}", out var g) || g.ValueKind != JsonValueKind.Array || g.GetArrayLength() < 2) continue;
             long group = (long)(GameData.Number(g[0]) ?? 0);
             double chance = GameData.Number(g[1]) ?? 0;
-            if (rates != null) chance = rates.DropChance(chance);
+            if (rates != null) chance = rates.DropChance(chance, _groupKinds.GetOrAdd(group, id => ClassifyGroup(_data, id)));
             int rolls = g.GetArrayLength() >= 3 ? Math.Clamp((int)(GameData.Number(g[2]) ?? 1), 1, 1000) : 1;
             int picks = g.GetArrayLength() >= 4 ? Math.Max(1, (int)(GameData.Number(g[3]) ?? 1)) : 1;
             if (poolId is 31121 or 31491 or 32106 || group is 121121 or 121122 or 121123) picks = 1;
@@ -286,14 +291,15 @@ public sealed class RewardService
 
     /// <summary>
     /// An award id (MultiverseGroupConfig → AwardConfig[0]._iDropPool → DropPoolConfig), rolled for this player;
-    /// same item ids merged. Used for MVP rewards and Monster Hunt area drops, so the Konsor drop and Zeny rates apply.
+    /// same item ids merged. Used for MVP rewards and Monster Hunt area drops, so the Konsor rates apply: mvp_drop in
+    /// place of drop, plus card_drop / equip_drop and zeny.
     /// </summary>
     public List<(int Entry, int Count)> RollAward(long multiverseId, GameSession player)
     {
         var drops = new List<(int, int)>();
         if (Resolve(multiverseId) is var awardId and > 0 && _data.Row("AwardConfig", awardId) is { ValueKind: JsonValueKind.Array } rows
             && rows.GetArrayLength() > 0 && GameData.Int(rows[0], "_iDropPool") is var pool and > 0)
-            RollPool(pool, player.Progress!, drops, rates: Rates.Current);
+            RollPool(pool, player.Progress!, drops, rates: Rates.Current.ForAward());
         return drops.GroupBy(d => d.Item1).Select(g => (g.Key, g.Sum(d => d.Item2))).ToList();
     }
 
@@ -385,6 +391,27 @@ public sealed class RewardService
             return;
         }
     }
+
+    /// <summary>
+    /// Konsor (not original): a group is <see cref="ServerRates.DropKind.Card"/> or
+    /// <see cref="ServerRates.DropKind.Equipment"/> when every row PickFromGroup could ever draw (_iWeights above 0, no
+    /// _iQuestLimit or _iActivityid) yields a card or equipment; the per-player level and job limits are ignored so the
+    /// result can be cached per group (inferred: a group's rows share one kind regardless of those limits).
+    /// </summary>
+    internal static ServerRates.DropKind ClassifyGroup(GameData data, long group)
+    {
+        var kinds = Data.Config.DropGroupConfig.Get(data, group)
+            .Where(r => r.Weights > 0 && r.QuestLimit == 0 && r.Activityid == 0)
+            .Select(r => ItemKind(data, r.DropItem)).Distinct().ToList();
+        return kinds.Count == 1 ? kinds[0] : ServerRates.DropKind.Mixed;
+    }
+
+    private static ServerRates.DropKind ItemKind(GameData data, long entry) => Data.Config.ItemConfig.Get(data, entry) switch
+    {
+        { Type: ItemTypeCard, SubType: ItemSubTypeCard } => ServerRates.DropKind.Card,
+        { Type: ItemTypeEquip } => ServerRates.DropKind.Equipment,
+        _ => ServerRates.DropKind.Mixed,
+    };
 
     /// <summary>LvExpCorrectionConfig: player level − monster level → ratio per 10000.</summary>
     private long Correction(int gap)
