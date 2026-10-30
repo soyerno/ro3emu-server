@@ -226,8 +226,34 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
         }
     }
 
-    public static Task ReplyAsync(GameSession session, string text) =>
-        session.SendGameAsync(BroadcastNotify, new BroadCastNotify { Content = text });
+    public static Task ReplyAsync(GameSession session, string text)
+    {
+        if (LoopbackReplies.Value is { } capture && capture.Session == session) capture.Texts.Add(text);
+        return session.SendGameAsync(BroadcastNotify, new BroadCastNotify { Content = text });
+    }
+
+    /// <summary>
+    /// The replies a loopback /ro3emu/gm line sends to its session. Flow-local (AsyncLocal), not shared state: each HTTP
+    /// request's flow sees only its own capture, so hosts in one process never mix them. Replies of a line that runs
+    /// detached (<see cref="RunAsync"/>) after the request returns are not captured.
+    /// </summary>
+    private static readonly AsyncLocal<(GameSession Session, List<string> Texts)?> LoopbackReplies = new();
+
+    /// <summary>The loopback HTTP /ro3emu/gm: runs the line and returns what it replied (still sent to the chat too), "" if nothing.</summary>
+    public async Task<string> RunLoopbackAsync(GameSession session, string line)
+    {
+        List<string> texts = [];
+        LoopbackReplies.Value = (session, texts);
+        try
+        {
+            await RunAsync(session, line, loopbackTool: true);
+        }
+        finally
+        {
+            LoopbackReplies.Value = null;
+        }
+        return string.Join("\n", texts);
+    }
 
     private Dictionary<string, (string Usage, Command Run)> Commands() => _commands ??= new()
     {
@@ -287,7 +313,7 @@ public sealed partial class GmCommands(IOptions<ServerOptions> options, GameData
         ["clearbag"] = ("", (s, a) => Op(s, OpClearPack, a)),
         ["client"] = ("<find name>", ClientDiagnostics),
         ["speed"] = ("<speed, 0 = normal>", async (s, a) => await ReplyAsync(s, await character.SetSpeedAsync(s, L(a[0])))),
-        ["quest"] = ("[accept|finish|done <taskId> | reset]", async (s, a) => await ReplyAsync(s, a.Length == 0
+        ["quest"] = ("[accept|finish|done|drop <taskId> | reset]", async (s, a) => await ReplyAsync(s, a.Length == 0
             ? "Quests: " + tasks.Describe(s)
             : await tasks.GmAsync(s, a[0].ToLowerInvariant(), a.Length > 1 ? L(a[1]) : 0))),
         ["mvp"] = ("[spawn|where|goto|weaken <cfg>]", async (s, a) =>

@@ -40,6 +40,29 @@ or through environment variables, one per account: `Ro3Emu__GmAccounts__0=your-a
 keeps its own rule: with an empty list it runs for any online account, with a list only for listed accounts.
 Production does not close it; it is the operator's tool on the server machine.
 
+It answers 200 with the command's reply as a JSON string (`"accept 10101010: ..."`; several replies are joined with a
+newline; `"done"` when the command replied nothing). The reply still goes to the player's chat too. 400 `not in game`
+when the account has no character in the world, 404 from any address but loopback, 503 while the server is not
+accepting commands.
+
+### Quest debugging
+
+Two loopback-only reads (404 from any other address) help with `!quest accept|finish|done|drop <taskId> | reset`:
+
+- `GET /ro3emu/quests`: every quest of TaskConfig, sorted by id, `[{"id": 10101010, "name": "..."}]` (`[]` without
+  the table).
+- `GET /ro3emu/quests?account=<account>`: the quests of that account's character in the world (account matched
+  without regard to case; 400 `not in game` otherwise):
+
+  ```json
+  {"account": "tester", "role": "Alice", "quests": [
+    {"id": 10101010, "name": "...", "status": "running", "progress": [{"done": 0, "need": 1}], "completed": 0}]}
+  ```
+
+  Every quest the character holds or has delivered, sorted by id. `status` is the TaskState in lower case (`running`,
+  `finish`, `delivery`, ...; `delivery` for a quest only counted in CompleteTaskNum), `progress` has one entry per
+  target and `completed` is how many times it was delivered.
+
 ## A public server
 
 On a server that other people can reach, start the host as Production and list the GM accounts. With systemd, a
