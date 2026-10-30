@@ -24,7 +24,7 @@ address (local play), and to every interface otherwise (`ServerOptions.ListenAdd
 | `GET /ro3emu/status` | public | the player count only, from the loop's census |
 | `POST /ro3emu/account/delete-role` | public, rate limited | needs the account's password; refuses a role that is in the world |
 | `POST /gift-card/use/v2` | public, rate limited | the client's gift-code redemption; needs the account's engine sign (the micro-gate login token); see [gift codes](gift-codes.md) |
-| `/ro3emu/gm`, `/ro3emu/metrics*`, `/ro3emu/online`, `/ro3emu/reports`, `/ro3emu/shutdown` | loopback only | answer 404 to any other address |
+| `/ro3emu/gm`, `/ro3emu/metrics*`, `/ro3emu/online`, `/ro3emu/quests`, `/ro3emu/reports`, `/ro3emu/shutdown` | loopback only | answer 404 to any other address |
 
 A reverse proxy on the same machine makes every request arrive from loopback. Do not forward the loopback-only paths.
 
