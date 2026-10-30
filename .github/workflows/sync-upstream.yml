@@ -1,0 +1,115 @@
+name: sync-upstream
+
+# Konsor: cada vez que aethai/ro3emu-server publica en main, lo integra en este fork.
+# Seguridad: el merge se hace en una rama temporal, se compila y se prueba (mismos pasos que tests.yml) y SOLO si todo
+# esta en verde se publica en main. Si hay conflicto o fallan las pruebas, main no se toca y se abre/actualiza un issue.
+# El servidor de produccion toma main con "Actualizar Server" del Konsor RO3 Control Panel.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  UPSTREAM: https://github.com/aethai/ro3emu-server.git
+
+jobs:
+  sync:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream and detect news
+        id: detect
+        shell: pwsh
+        run: |
+          git config user.name  "konsor-sync-bot"
+          git config user.email "konsor-sync-bot@users.noreply.github.com"
+          git remote add upstream $env:UPSTREAM
+          git fetch upstream main --tags
+          $behind = [int](git rev-list --count HEAD..upstream/main)
+          Write-Host "commits de aethai que faltan: $behind"
+          "behind=$behind" >> $env:GITHUB_OUTPUT
+          "tag=$(git describe --tags --abbrev=0 upstream/main 2>$null)" >> $env:GITHUB_OUTPUT
+          "sha=$(git rev-parse --short upstream/main)" >> $env:GITHUB_OUTPUT
+
+      - name: Merge upstream/main on a scratch branch
+        id: merge
+        if: steps.detect.outputs.behind != '0'
+        shell: pwsh
+        run: |
+          git switch -c sync/upstream-auto
+          git merge upstream/main --no-edit -m "chore: sync upstream ${{ steps.detect.outputs.tag }} (${{ steps.detect.outputs.sha }})"
+          if ($LASTEXITCODE -ne 0) {
+            git diff --name-only --diff-filter=U | Out-File conflicts.txt
+            git merge --abort
+            "conflict=true" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          "conflict=false" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-dotnet@v6
+        if: steps.merge.outputs.conflict == 'false'
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            Directory.Packages.props
+            **/*.csproj
+
+      # Mismos pasos que tests.yml.
+      - name: Server tests
+        id: t1
+        if: steps.merge.outputs.conflict == 'false'
+        continue-on-error: true
+        run: dotnet test tests/Ro3Emu.Tests -c Release --filter "Category!=Slow"
+      - name: Patcher tests
+        id: t2
+        if: steps.merge.outputs.conflict == 'false'
+        continue-on-error: true
+        run: dotnet test tests/Ro3Emu.Patcher.Tests -c Release
+      - name: Setup tests
+        id: t3
+        if: steps.merge.outputs.conflict == 'false'
+        continue-on-error: true
+        run: dotnet test tests/Ro3Emu.Setup.Tests -c Release --filter "Category!=Slow"
+      - name: Build the server
+        id: build
+        if: steps.merge.outputs.conflict == 'false'
+        continue-on-error: true
+        run: dotnet build src/Ro3Emu.Server -c Release
+
+      - name: Publish to main only when everything is green
+        id: publish
+        if: steps.merge.outputs.conflict == 'false' && steps.t1.outcome == 'success' && steps.t2.outcome == 'success' && steps.t3.outcome == 'success' && steps.build.outcome == 'success'
+        shell: pwsh
+        run: |
+          # fast-forward: main no se mueve si alguien subio algo mientras corrian las pruebas
+          git push origin sync/upstream-auto:main
+          if ($LASTEXITCODE -ne 0) { Write-Error "main cambio durante la sincronizacion; se reintenta en la proxima corrida"; exit 1 }
+
+      - name: Report a blocked sync in an issue
+        if: always() && steps.detect.outputs.behind != '0' && steps.publish.outcome != 'success'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $title = "sync-upstream bloqueado: aethai ${{ steps.detect.outputs.tag }} (${{ steps.detect.outputs.sha }})"
+          $reason = if ('${{ steps.merge.outputs.conflict }}' -eq 'true') { "Conflicto de merge en:`n" + (Get-Content conflicts.txt -Raw) } else { "Pruebas/compilacion en rojo: server=${{ steps.t1.outcome }} patcher=${{ steps.t2.outcome }} setup=${{ steps.t3.outcome }} build=${{ steps.build.outcome }}" }
+          $body = "main NO se modifico.`n`n$reason`n`nCorrida: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $existing = gh issue list --state open --search "sync-upstream bloqueado in:title" --json number --jq '.[0].number'
+          if ($existing) { gh issue comment $existing --body $body } else { gh issue create --title $title --body $body }
