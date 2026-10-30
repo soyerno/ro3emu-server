@@ -156,7 +156,8 @@ public sealed class LevelDropEnergyRulesTests : IAsyncLifetime
         Assert.Equal(14500, character.PursueExpPercent(59, 69));   // 10 below
         Assert.Equal(40000, character.PursueExpPercent(49, 69));   // 20 below: +400%
         Assert.Equal(40000, character.PursueExpPercent(1, 69));    // past the table: the last row
-        Assert.Equal(500, character.WithPursueBonus(1, 100));
+        // Konsor RO3: the catch-up bonus is switched off (CharacterService.WithPursueBonus returns the base exp): 1x at any gap.
+        Assert.Equal(100, character.WithPursueBonus(1, 100));
         Assert.Equal(100, character.WithPursueBonus(69, 100));
     }
 
@@ -168,8 +169,8 @@ public sealed class LevelDropEnergyRulesTests : IAsyncLifetime
         await Gm(bot, "!lvl 60");
         Assert.True(GameData.Int(Data.Row("BaseLvConfig", 60)!.Value, "_iBaseExp") > 2200);
         await Gm(bot, "!exp 1000");
-        // 9 below server level 69: BaseExpAddConfig +120%.
-        Assert.Equal((60, 2200L), (session.Progress!.Level, session.Progress.Exp));
+        // 9 below server level 69: Konsor RO3 gives no catch-up bonus (1x), so 1000 stays 1000.
+        Assert.Equal((60, 1000L), (session.Progress!.Level, session.Progress.Exp));
         await Gm(bot, "!lvl 69");
         await Gm(bot, "!exp 1000");
         Assert.Equal((69, 1000L), (session.Progress.Level, session.Progress.Exp));
