@@ -9,9 +9,10 @@ namespace Ro3Emu.Tests;
 /// <summary>
 /// Invented content: a skill that may cut another skill's action (_bCancelCast 1) and has no cooldown cannot cut and
 /// restart its own action by being spammed; it waits for its action like a normal attack waits for its swing (issue #121),
-/// with the same CombatService.SwingJitterMs of slack. Another skill still cuts the action.
+/// with the same CombatService.SwingJitterMs of slack. Another skill still cuts the action. The wait outlives the cast:
+/// interrupting it (31124), walking away or cutting it with another skill does not free the skill early.
 /// </summary>
-public sealed class SkillRecastTests : IAsyncDisposable
+public sealed partial class SkillRecastTests : IAsyncDisposable
 {
     private const int Dust = 99201, Spark = 99301;
     private const int ActionMs = 1200;

@@ -104,6 +104,7 @@ public sealed partial class CombatService
             // Preserve the established cooldown refusal for a repeated cast, including during its action tail.
             else if (s.SkillCast is { Cancelled: false } active && Now < active.StartMs + active.ChantMs + active.ActionMs
                 && (!new SkillConfig(row.Value).CancelCast || OwnActionInFlight(active, row.Value, req))) error = ErrorCodes.SkillBusy;
+            else if (ActionLocked(s, row.Value)) error = ErrorCodes.SkillBusy;
             else error = ValidateTarget(s, row.Value, req, origin, owned == null ? WalkSlack(s) : 0,
                 _data.Row("SkillConfig", request.SkillId) is { } askedRow ? Range(askedRow) : 0);
         }
@@ -216,6 +217,26 @@ public sealed partial class CombatService
     }
 
     internal const int SwingJitterMs = 150;
+
+    /// <summary>
+    /// The wait for a skill's own action (<see cref="OwnActionInFlight"/>) outlives the cast: interrupting it (31124, with or
+    /// without NxtSkill), walking away from a _bMovement 0 skill or cutting it with another skill would otherwise free the
+    /// group at once, and a skill without _iCD would hit at click speed again (inferred). Until the last accepted cast of
+    /// the group would have ended, less <see cref="SwingJitterMs"/>, the group is busy. Normal attacks keep their per-target
+    /// rule (issue #121) and are not recorded.
+    /// </summary>
+    private bool ActionLocked(GameSession s, JsonElement row) => new SkillConfig(row) is var config && !config.IsNormalAttack(_data)
+        && s.SkillActionEnds.TryGetValue((int)config.SkillId, out long end) && Now < end - SwingJitterMs;
+
+    /// <summary>Records when an accepted cast's action ends for <see cref="ActionLocked"/>; ended entries are dropped.</summary>
+    private void RecordActionEnd(GameSession s, ActiveSkillCast action)
+    {
+        var config = new SkillConfig(action.Row);
+        if (config.IsNormalAttack(_data)) return;
+        long now = Now;
+        foreach (int group in s.SkillActionEnds.Where(e => e.Value <= now).Select(e => e.Key).ToArray()) s.SkillActionEnds.Remove(group);
+        s.SkillActionEnds[(int)config.SkillId] = action.StartMs + action.ChantMs + action.ActionMs;
+    }
 
     private bool Learned(GameSession s, JsonElement row)
     {
@@ -485,6 +506,7 @@ public sealed partial class CombatService
             StartMs = Now + leadMs, ChantMs = ChantMs(s, row), ActionMs = SkillMs(s, row), Operator = actor,
         };
         s.SkillCast = action;
+        RecordActionEnd(s, action);
         s.WorldState.ResurrectionCastId = Script(row) == "Resurrection" ? id : 0;
         s.Face = face;
         req.Face = face;
