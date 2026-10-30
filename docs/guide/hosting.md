@@ -27,6 +27,9 @@ Open TCP `5380`, `20000` and `33100`, and the voice port if you turn voice on wi
   `"Ro1AggressiveMonsters": false` under `Ro3Emu` in `appsettings.json`) to turn it off. The field monsters whose Ragnarok Online 1
   counterpart is aggressive then attack players they see, like the few that already do. This follows RO1
   (rAthena's monster database), not the original RO3 server.
+- **Party EXP share** (off by default): `Ro3Emu__PartyExpShare=true` (or `"PartyExpShare": true` under `Ro3Emu` in
+  `appsettings.json`) splits a kill's Base EXP evenly among the killer's party members online on the same map (at
+  least 1 each); Job EXP and loot stay with the killer. A server option, not how the original RO3 server worked.
 - **Backups:** the database is backed up to `data/backups/` at start and every 6 hours (newest 20 kept). All but the
   newest two are gzip-compressed (`.db.gz`, about a quarter of the size); `Ro3Emu.Server --restore-backup` takes either
   kind. `Ro3Emu__Backup__Keep`, `Ro3Emu__Backup__IntervalHours` and `Ro3Emu__Backup__Uncompressed` (or `Backup` under

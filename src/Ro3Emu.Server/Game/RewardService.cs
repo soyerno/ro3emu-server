@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Romsg;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
@@ -15,7 +16,7 @@ namespace Ro3Emu.Server.Game;
 /// else to the bag; then one 31322 drop notify makes
 /// the client animate the loot from the corpse.
 /// </summary>
-public sealed class RewardService
+public sealed partial class RewardService
 {
     private const int BaseExpItem = 100, JobExpItem = 101;
     private const int RewardDrop = 8; // ManifestType Drop
@@ -35,6 +36,7 @@ public sealed class RewardService
     internal ServerRates Rates { get; }
     private readonly FieldExpRule[] _configuredFieldExp; // Ro3Emu:FieldExpRates (inferred), empty unless an operator set it
     private volatile FieldExpRule[] _fieldExp; // the rules in force: the configured ones until a GM changes them
+    private readonly bool _partyExpShare; // Ro3Emu:PartyExpShare (inferred), off unless an operator set it
 
     /// <summary>Field AFK selects the enhanced _iDrop table only for qualified ordinary field kills.
     /// Other kills use environment 0, preserving ordinary rewards (localization 10960000077; mapping inferred).</summary>
@@ -48,10 +50,11 @@ public sealed class RewardService
     internal Action<GameSession, MonsterUnit, RewardSettlement>? StageHuntKill { get; set; }
 
     public RewardService(CombatService combat, CharacterService character, TeamService teams, GameData data, ILogger<RewardService> log,
-        ServerRates? rates = null, Microsoft.Extensions.Options.IOptions<ServerOptions>? options = null)
+        ServerRates? rates = null, IOptions<ServerOptions>? options = null)
     {
         Rates = rates ?? new ServerRates();
         _fieldExp = _configuredFieldExp = FieldExpRates.Valid(options?.Value);
+        _partyExpShare = options?.Value.PartyExpShare == true;
         this._character = character;
         this._teams = teams;
         this._data = data;
@@ -68,9 +71,12 @@ public sealed class RewardService
         internal long BaseExp;
         internal long JobExp;
         internal bool Published;
+        /// <summary>ServerOptions.PartyExpShare: the Base EXP share and the other members it goes to (inferred).</summary>
+        internal PartyShare? Party;
         /// <summary>The bag items the committed kill created (auto-decomposed ones are gone).</summary>
         internal List<InvItem> Granted = [];
     }
+    internal sealed record PartyShare(long Exp, IReadOnlyList<(GameSession Session, Role Role)> Others);
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<MonsterUnit, KillOutcome> _outcomes = new();
     internal Func<GameSession, MonsterUnit, (List<(int Entry, int Count)> Items, long BaseExp, long JobExp)>? ResolveKillForTest { get; set; }
 
@@ -109,8 +115,8 @@ public sealed class RewardService
             if (_outcomes.TryGetValue(monster, out var stale) && stale.Role.Id != role.Id) _outcomes.Remove(monster);
             if (!_outcomes.TryGetValue(monster, out var outcome))
             {
-                var (items, baseExp, jobExp) = ResolveKill(player, monster, bonus);
-                outcome = new KillOutcome { Role = role, Items = items, BaseExp = baseExp, JobExp = jobExp };
+                var (items, baseExp, jobExp, party) = ResolveKill(player, monster, bonus);
+                outcome = new KillOutcome { Role = role, Items = items, BaseExp = baseExp, JobExp = jobExp, Party = party };
                 _outcomes.Add(monster, outcome);
             }
             _character.StageKillTaskObligations?.Invoke(player, monster, settlement);
@@ -149,13 +155,20 @@ public sealed class RewardService
         }
     }
 
-    internal (List<(int Entry, int Count)> Items, long BaseExp, long JobExp) ResolveKill(GameSession player, MonsterUnit monster, bool bonus)
+    internal (List<(int Entry, int Count)> Items, long BaseExp, long JobExp, PartyShare? Party) ResolveKill(GameSession player,
+        MonsterUnit monster, bool bonus)
     {
-        if (ResolveKillForTest != null) return ResolveKillForTest(player, monster);
+        if (ResolveKillForTest != null)
+        {
+            var (testItems, testBase, testJob) = ResolveKillForTest(player, monster);
+            return Share(player, testBase) is { } testParty
+                ? (testItems, _character.WithPursueBonus(player.Progress!.Level, testParty.Exp), testJob, testParty)
+                : (testItems, testBase, testJob, null);
+        }
         // Team-boss personal awards have their own durable dungeon obligation; ordinary loot stays empty.
         if (player.DungeonAttempt is { Plan.Multi: not null } dungeon && monster.InstanceId == dungeon.Room.Id)
-            return ([], 0, 0);
-        if (_data.Row("NPCConfig", monster.Template.NpcId) is not { } npc) return ([], 0, 0);
+            return ([], 0, 0, null);
+        if (_data.Row("NPCConfig", monster.Template.NpcId) is not { } npc) return ([], 0, 0, null);
         var rates = Rates.Current;
         var drops = new List<(int Entry, int Count)>();
         foreach (var (row, maps) in KillDropRows(_data, npc, bonus))
@@ -173,9 +186,43 @@ public sealed class RewardService
         }
         // Konsor rates scale the corrected EXP: Base EXP by base_exp, Job EXP (equal before scaling) by job_exp.
         var (rateBase, rateJob) = rates.KillExp(baseExp);
+        var party = Share(player, rateBase);
         // BaseExpAddConfig catch-up below the server level raises Base EXP only (CharacterService.LevelRules).
-        return (items, _character.WithPursueBonus(player.Progress!.Level, rateBase), rateJob);
+        return (items, _character.WithPursueBonus(player.Progress!.Level, party?.Exp ?? rateBase), rateJob, party);
     }
+
+    /// <summary>ServerOptions.PartyExpShare (inferred, an operator's option): the kill's Base EXP split evenly among the
+    /// killer's online party members on the same map, at least 1 each; null when off, solo or worth nothing.</summary>
+    private PartyShare? Share(GameSession killer, long baseExp)
+    {
+        if (!_partyExpShare || baseExp <= 0) return null;
+        var members = _teams.SameMapMembers(killer);
+        if (members.Count < 2) return null;
+        var others = members.Where(m => !ReferenceEquals(m, killer)).Select(m => (m, m.Role!)).ToList();
+        return new PartyShare(Math.Max(1, baseExp / members.Count), others);
+    }
+
+    /// <summary>The other members' shares, each through its own EXP grant and lock after the kill committed: the
+    /// catch-up bonus by their own level, the +EXP float and any level-up (CharacterService.AddExpAsync).</summary>
+    private async Task GrantPartySharesAsync(PartyShare party)
+    {
+        foreach (var (session, role) in party.Others)
+        {
+            bool StillOwner() => ReferenceEquals(session.Role, role) && session.Attachment?.Cancelled != true;
+            try { await _character.AddExpAsync(session, party.Exp, 0, StillOwner); }
+            catch (OperationCanceledException)
+            {
+                // That member's session closed: its share is lost, but the killer's own reward still publishes.
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                LogPartyShareFailed(e, party.Exp, role.Name);
+            }
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Party EXP share of {Exp} to {Name} failed")]
+    private partial void LogPartyShareFailed(Exception error, long exp, string name);
 
     /// <summary>FieldExpRates (inferred): an open-field monster (NPCConfig._iWildMonsters 1) pays the rate of the killer's level.</summary>
     internal long ScaleFieldExp(int npcId, long level, long exp)
@@ -201,6 +248,7 @@ public sealed class RewardService
         await PrepareKilledAsync(player, monster); // also covers existing service/test callbacks
         if (!_outcomes.TryGetValue(monster, out var outcome) || outcome.Published) return;
         outcome.Published = true;
+        if (outcome.Party != null) await GrantPartySharesAsync(outcome.Party);
         var role = outcome.Role;
         if (!ReferenceEquals(player.Role, role) || player.Attachment?.Cancelled == true) return;
         using (await CharacterService.Lock(player))
