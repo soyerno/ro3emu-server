@@ -281,8 +281,22 @@ public static partial class ServerHost
             {
                 var session = sessions.All().FirstOrDefault(s => string.Equals(s.Account, account, StringComparison.OrdinalIgnoreCase));
                 if (session?.Role == null) return Results.BadRequest("not in game");
-                await gm.RunAsync(session, line, loopbackTool: true);
-                return Results.Ok("done");
+                string reply = await gm.RunLoopbackAsync(session, line);
+                return Results.Ok(reply.Length > 0 ? reply : "done");
+            });
+        });
+        // Quest debugging (loopback only, docs/guide/gm-access.md): GET /ro3emu/quests = the TaskConfig catalog,
+        // GET /ro3emu/quests?account=tester = that online role's quests. Changes go through POST /ro3emu/gm "!quest ...".
+        app.MapGet("/ro3emu/quests", async (HttpContext context, SessionRegistry sessions, TaskService tasks, GameLoop loop) =>
+        {
+            if (context.Connection.RemoteIpAddress is not { } ip || !System.Net.IPAddress.IsLoopback(ip)) return Results.NotFound();
+            if (!context.Request.Query.ContainsKey("account")) return await loop.InvokeAsync(() => Task.FromResult(Results.Json(tasks.Catalog())));
+            var account = context.Request.Query["account"].ToString();
+            return await loop.InvokeAsync(async () =>
+            {
+                var session = sessions.All().FirstOrDefault(s => string.Equals(s.Account, account, StringComparison.OrdinalIgnoreCase));
+                if (session?.Role == null) return Results.BadRequest("not in game");
+                return Results.Json(await tasks.StateAsync(session));
             });
         });
         // In-game bug reports (loopback only, docs/guide/feedback.md): GET /ro3emu/reports?since=<id or ISO time>&limit=&format=text

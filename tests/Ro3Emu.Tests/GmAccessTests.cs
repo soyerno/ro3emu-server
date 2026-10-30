@@ -35,7 +35,7 @@ public sealed class GmAccessTests
     [InlineData("admin", false, "admin", false, true)]
     [InlineData("admin", false, "Admin", false, false)] // the stored spelling only: a case variant is not the GM
     [InlineData("admin", null, "tester", false, false)]
-    [InlineData("admin", false, "tester", true, false)] // a list binds the tool as before
+    [InlineData("admin", false, "tester", true, true)]  // the loopback tool is authorized by its origin, not by the list
     public void TheAllowlistMatrix(string list, bool? openWhenEmpty, string account, bool loopbackTool, bool expected)
     {
         var options = new ServerOptions
@@ -87,6 +87,26 @@ public sealed class GmAccessTests
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { Directory.Delete(dataDir, true); } catch (IOException) { }
         }
+    }
+
+    [Fact]
+    public async Task WithAListTheLoopbackToolRunsForAnUnlistedAccountWhoseChatGmStaysRefused()
+    {
+        await using var host = await SyntheticHost.StartAsync(o => o.GmAccounts = ["admin"]);
+        await using var tester = await host.InWorldAsync("Tester");
+        await tester.JoinChatAsync("4_1");
+
+        await tester.SendChatAsync("4_1", 2, "!where", channelIndex: 4);
+        Assert.Contains("not enabled", await Marquee(tester, "not enabled"));
+
+        using var client = new HttpClient();
+        var response = await client.PostAsync($"{host.Http}/ro3emu/gm?account=tester", new StringContent("!where"));
+        response.EnsureSuccessStatusCode();
+        Assert.Contains("Scene", await Marquee(tester, "Scene"));
+
+        // The relay did not widen in-game access: the same account's chat line is still refused.
+        await tester.SendChatAsync("4_1", 2, "!where", channelIndex: 4);
+        Assert.Contains("not enabled", await Marquee(tester, "not enabled"));
     }
 
     private static async Task<string> Marquee(BotClient bot, string? contains = null) =>

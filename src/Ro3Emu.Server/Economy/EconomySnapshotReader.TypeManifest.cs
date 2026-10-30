@@ -85,7 +85,9 @@ public static partial class EconomySnapshotReader
     // Daily compensation: role.daily DailyState.Compensation lists, per ended day, the goods of the To-Do boxes that day
     // reached and left unclaimed. An obligation, not a holding: the goods are sourced only by the 1058 letter's
     // mail/deliver receipt (ActivityReward), delivered once by its daily-compensation delivery key, which also removes the day.
-    public const string ExpectedFormatManifestHash = "C99D38A7E3C57714CB7F363C3296CB1CD3255D33D2CFB739999F4E1BFF0D98B6";
+    // Wild AFK: role.wild_afk WildAfkService.State.GmUnlocked is a GM unlock marker (!afkunlock, a GM aid) that keeps
+    // function 18 open for the role. No balance and no asset: it only gates the OnHook requests.
+    public const string ExpectedFormatManifestHash = "9D35930764572398DC64011BA87CF32BA0CE62F56308DF79418982AF014424C6";
     public static string FormatManifestHash => State.FormatManifestHash;
 
     private sealed partial class State
