@@ -85,7 +85,30 @@ The client's Pupa (NPCConfig 5000035, level 4) has 4 HP: AttriMonsterConfig 1100
 `[[101, 1000]]` takes it to 10%, so it dies in one hit. In Ragnarok Online 1 the Pupa is a level 2 cocoon with 427 HP (rAthena
 pre-renewal `mob_db.yml`, id 1008). The client's beginner monsters already sit on the RO1 scale once `_kAttriScale` is applied
 (Fabre 63 HP against RO1's 63, Lunatic 58 against 60, Drops 40 against 55, Poring 32 to 65 against 50), so the RO1 number is used
-as it is. `Reconstructed/ro1-monster-hp.json` lists the monsters; with the switch on (the default, a trial like
-`Ro1AggressiveMonsters`) their templates take that HP, with it off nothing changes. Every client monster whose name has Egg or Pupa was checked: the Thief Bug Egg (83 against 48), the Eggyra, the story dungeon's Ant Egg (5300036, 830) and the level 50 Peco Peco Egg are not below RO1 and are not listed. An RO1 reference, not client evidence
+as it is. `Reconstructed/ro1-monster-hp.json` lists the monsters; with the switch on their templates take that HP. It is off
+by default: the client cuts their HP on purpose (`_kAttriScale`), so a 1:1 server keeps it, and an operator turns it on for the
+RO1 feel (`Ro3Emu__Ro1MonsterHp=true`). Every client monster whose name has Egg or Pupa was checked: the Thief Bug Egg (83 against 48), the Eggyra, the story dungeon's Ant Egg (5300036, 830) and the level 50 Peco Peco Egg are not below RO1 and are not listed. An RO1 reference, not client evidence
 (**inferred**).
 
+## Field EXP rates (`Ro3Emu:FieldExpRates`)
+
+A kill pays what the client's drop tables say: the monster's `_iDrop` and `_iNormalDrop` chains give item 100 (Base EXP), scaled
+by `LvExpCorrectionConfig` for the level gap between killer and monster (`RewardService.ResolveKill`). The client has no EXP value
+per monster, and the original's own rate is not in its data. An operator who finds levelling too slow can scale it by the killer's
+base level; the list is empty by default, so nothing changes unless it is set (**inferred**: the original had no such knob):
+
+```json
+{
+  "Ro3Emu": {
+    "FieldExpRates": [
+      { "MinLevel": 20, "MaxLevel": 40, "Percent": 300 }
+    ]
+  }
+}
+```
+
+The first rule whose range holds the killer's base level scales that kill's Base EXP (and the Job EXP, which equals it) after the
+level-gap correction and the team bonus; 100 leaves it as it is. It applies only to open-field monsters (`NPCConfig._iWildMonsters`
+1), not to monsters without that flag (the story dungeons' ones, for example), and to both ordinary and Bonus Time kills. A rule with an empty range or a percent outside 1 to
+10000 is ignored, and a kill that pays EXP never pays less than 1. The `BaseExpAddConfig` catch-up is applied after it, as before.
+`Ro3Emu__FieldExpRates__0__MinLevel=20` and its siblings set a rule through the environment.
