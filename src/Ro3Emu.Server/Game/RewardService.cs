@@ -16,7 +16,7 @@ namespace Ro3Emu.Server.Game;
 /// else to the bag; then one 31322 drop notify makes
 /// the client animate the loot from the corpse.
 /// </summary>
-public sealed class RewardService
+public sealed partial class RewardService
 {
     private const int BaseExpItem = 100, JobExpItem = 101;
     private const int RewardDrop = 8; // ManifestType Drop
@@ -210,12 +210,19 @@ public sealed class RewardService
         {
             bool StillOwner() => ReferenceEquals(session.Role, role) && session.Attachment?.Cancelled != true;
             try { await _character.AddExpAsync(session, party.Exp, 0, StillOwner); }
+            catch (OperationCanceledException)
+            {
+                // That member's session closed: its share is lost, but the killer's own reward still publishes.
+            }
             catch (Exception e) when (e is not OperationCanceledException)
             {
-                _log.LogWarning(e, "Party EXP share of {Exp} to {Name} failed", party.Exp, role.Name);
+                LogPartyShareFailed(e, party.Exp, role.Name);
             }
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Party EXP share of {Exp} to {Name} failed")]
+    private partial void LogPartyShareFailed(Exception error, long exp, string name);
 
     /// <summary>FieldExpRates (inferred): an open-field monster (NPCConfig._iWildMonsters 1) pays the rate of the killer's level.</summary>
     internal long ScaleFieldExp(int npcId, long level, long exp)

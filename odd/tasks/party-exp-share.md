@@ -42,3 +42,11 @@ same-map member count (TeamExpBuffNum). Party members get nothing, so partying f
 
 ## Next step
 Parent: commit T1, native review assessment.
+
+## Review and CI follow-up
+- Native review (medium, review-reliability lens): granted, approved, acknowledged (lineage review-a77eada2d3560733).
+- CI "Analyzer baseline" failed on CA1848 (377 -> 378): the party-share warning now uses a `[LoggerMessage]` method.
+- Review R3-001 fixed: a member's `OperationCanceledException` no longer escapes and skips the killer's publication.
+- Open follow-ups (advisory, not blocking): R3-002 a member who leaves between resolve and publish loses their share
+  instead of it being redistributed; R3-003 no tests yet for offline members, the minimum-1 floor, solo with the option
+  on, parties larger than two, or the production `ResolveKill` path.
