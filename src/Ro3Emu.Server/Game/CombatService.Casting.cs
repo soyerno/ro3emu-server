@@ -222,8 +222,10 @@ public sealed partial class CombatService
     /// The wait for a skill's own action (<see cref="OwnActionInFlight"/>) outlives the cast: interrupting it (31124, with or
     /// without NxtSkill), walking away from a _bMovement 0 skill or cutting it with another skill would otherwise free the
     /// group at once, and a skill without _iCD would hit at click speed again (inferred). Until the last accepted cast of
-    /// the group would have ended, less <see cref="SwingJitterMs"/>, the group is busy. Normal attacks keep their per-target
-    /// rule (issue #121) and are not recorded.
+    /// the group would have ended, less <see cref="SwingJitterMs"/>, the group is busy, once its action has started
+    /// (<see cref="ReleaseChantLock"/>); death and scene/role/disconnect teardown clear it
+    /// (<see cref="ClearSkillsAsync"/>, inferred). Normal attacks keep their per-target rule (issue #121) and are not
+    /// recorded.
     /// </summary>
     private bool ActionLocked(GameSession s, JsonElement row) => new SkillConfig(row) is var config && !config.IsNormalAttack(_data)
         && s.SkillActionEnds.TryGetValue((int)config.SkillId, out long end) && Now < end - SwingJitterMs;
@@ -236,6 +238,17 @@ public sealed partial class CombatService
         long now = Now;
         foreach (int group in s.SkillActionEnds.Where(e => e.Value <= now).Select(e => e.Key).ToArray()) s.SkillActionEnds.Remove(group);
         s.SkillActionEnds[(int)config.SkillId] = action.StartMs + action.ChantMs + action.ActionMs;
+    }
+
+    /// <summary>
+    /// A cast cancelled before its chant ended never started its action and no hit of it can land, so it does not bind
+    /// its group: the skill may be cast again at once (inferred). A cast cancelled during its action keeps the wait.
+    /// </summary>
+    private static void ReleaseChantLock(GameSession s, ActiveSkillCast action)
+    {
+        int group = (int)new SkillConfig(action.Row).SkillId;
+        if (Now < action.StartMs + action.ChantMs && s.SkillActionEnds.TryGetValue(group, out long end)
+            && end == action.StartMs + action.ChantMs + action.ActionMs) s.SkillActionEnds.Remove(group);
     }
 
     private bool Learned(GameSession s, JsonElement row)
@@ -579,6 +592,7 @@ public sealed partial class CombatService
         if (s.SkillCast is not { } action) return;
         action.Cancelled = true;
         s.SkillCast = null;
+        ReleaseChantLock(s, action);
         await ToPlayerAndViewersAsync(s, SkillEnd, new SkillEndNotify
         {
             SrcID = action.SourceId, SessionId = action.Id, Type = SkillEndNotify.Types.SkillEndType.Interrupted,

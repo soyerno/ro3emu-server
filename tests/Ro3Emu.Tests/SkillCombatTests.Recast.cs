@@ -14,8 +14,8 @@ namespace Ro3Emu.Tests;
 /// </summary>
 public sealed partial class SkillRecastTests : IAsyncDisposable
 {
-    private const int Dust = 99201, Spark = 99301;
-    private const int ActionMs = 1200;
+    private const int Dust = 99201, Spark = 99301, Hymn = 99401;
+    private const int ActionMs = 1200, ChantMs = 1500;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private readonly string _root = Path.Combine(Path.GetTempPath(), "ro3emu-recast-" + Guid.NewGuid().ToString("N"));
     private SyntheticHost? _host;
@@ -69,6 +69,7 @@ public sealed partial class SkillRecastTests : IAsyncDisposable
         {
             [Dust.ToString(CultureInfo.InvariantCulture)] = Skill(Dust, 992),
             [Spark.ToString(CultureInfo.InvariantCulture)] = Skill(Spark, 993),
+            [Hymn.ToString(CultureInfo.InvariantCulture)] = Chanted(Hymn, 994),
         }));
         _host = await SyntheticHost.StartAsync(o => o.GameDataDir = _root);
         return await Host.InWorldAsync("Recaster");
@@ -78,6 +79,13 @@ public sealed partial class SkillRecastTests : IAsyncDisposable
     private static object Skill(int id, int group) => new
     {
         _iID = id, _iSkillID = group, _iBasicType = 1, _bCancelCast = 1, _iCD = 0, _iActionTime = ActionMs,
+    };
+
+    /// <summary>The same skill with a fixed chant before its action.</summary>
+    private static object Chanted(int id, int group) => new
+    {
+        _iID = id, _iSkillID = group, _iBasicType = 1, _bCancelCast = 1, _iCD = 0, _iActionTime = ActionMs,
+        _iChantFix = ChantMs,
     };
 
     private async Task<int> Cast(BotClient bot, int skill)

@@ -143,6 +143,7 @@ public sealed class GameSession(PhonestChannel channel, TrafficLog traffic)
     /// <summary>Authoritative cast generation; delayed effects cannot outlive an interrupted/replaced cast.</summary>
     public ActiveSkillCast? SkillCast { get; set; }
     /// <summary>When each skill group's last accepted cast (chant + action) ends, in server ms; outlives its cancellation
+    /// once the action has started, cleared by death and scene/role/disconnect teardown
     /// (CombatService.ActionLocked).</summary>
     public Dictionary<int, long> SkillActionEnds { get; } = [];
     public SemaphoreSlim SkillCastGate { get; } = new(1, 1);
