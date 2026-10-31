@@ -19,6 +19,8 @@ namespace Ro3Emu.Loc
     /// <item>misses are appended once to &lt;client&gt;/ro3emu/loc_misses.tsv (collect mode).</item>
     /// </list>
     /// Data: the embedded loc_en.tsv, then &lt;client&gt;/ro3emu/loc_en.tsv (overrides). Lines are "zh\ten" with \t \n \\ escaped.
+    /// While language.txt selects Spanish, &lt;client&gt;/ro3emu/loc_sid_es.tsv ("sid\ttext") replaces texts the client looks
+    /// up by id (<see cref="Sid"/>).
     /// </summary>
     public static class Ro3Loc
     {
@@ -26,6 +28,7 @@ namespace Ro3Emu.Loc
         private static Dictionary<string, string> _map;
         private static List<Template> _templates;
         private static Dictionary<long, string> _sids;
+        private static Dictionary<long, string> _texts;
         private static readonly Dictionary<string, string> Derived = new Dictionary<string, string>(StringComparer.Ordinal);
         private static readonly HashSet<string> Misses = new HashSet<string>(StringComparer.Ordinal);
         private static string _dir;
@@ -40,11 +43,25 @@ namespace Ro3Emu.Loc
         public static string MapHud(string text) => MapFrom(text, 2);
 
         /// <summary>
-        /// LanguageMain.Get(sid) result: a sid that is in no Localization table comes back "" / "None" / "Not Find Key",
-        /// so the label would be empty. Those sids map to the Chinese baked into the prefab (loc_sids.tsv), then to English.
+        /// LanguageMain.Get(sid) result. In Spanish, a sid in &lt;client&gt;/ro3emu/loc_sid_es.tsv (our translation of the
+        /// sid's Chinese text, which the client would show in its own English) returns that text. A sid that is in no
+        /// Localization table comes back "" / "None" / "Not Find Key", so the label would be empty. Those sids map to the
+        /// Chinese baked into the prefab (loc_sids.tsv), then to English.
         /// </summary>
         public static string Sid(string value, long sid)
         {
+            try
+            {
+                lock (Gate)
+                {
+                    if (_map == null) Load();
+                    if (_texts != null && _texts.TryGetValue(sid, out var text)) return text;
+                }
+            }
+            catch
+            {
+                // keep the value the client resolved
+            }
             if (string.IsNullOrEmpty(value) || value == "None" || value.StartsWith("Not Find Key", StringComparison.Ordinal))
             {
                 try
@@ -488,7 +505,7 @@ namespace Ro3Emu.Loc
                 }
                 _sids = new Dictionary<long, string>();
                 using (var stream = typeof(Ro3Loc).Assembly.GetManifestResourceStream("loc_sids.tsv"))
-                    if (stream != null) ReadSids(new StreamReader(stream, Encoding.UTF8));
+                    if (stream != null) ReadSids(new StreamReader(stream, Encoding.UTF8), _sids);
 
                 string overrides = Path.Combine(_dir, "loc_en.tsv");
                 if (File.Exists(overrides)) Read(new StreamReader(overrides, Encoding.UTF8));
@@ -497,6 +514,27 @@ namespace Ro3Emu.Loc
             {
                 _failed = _map.Count == 0;
             }
+            LoadTexts();
+        }
+
+        /// <summary>
+        /// &lt;client&gt;/ro3emu/loc_sid_es.tsv ("sid\ttext", written by RO3Emu.exe): Spanish text that replaces a sid's own.
+        /// Read only while language.txt selects Spanish; in English the client's own text by id stays.
+        /// </summary>
+        private static void LoadTexts()
+        {
+            var texts = new Dictionary<long, string>();
+            try
+            {
+                string dir = _dir ?? ResolveRo3EmuDir();
+                string file = Path.Combine(dir, "loc_sid_es.tsv");
+                if (GetConfiguredLanguage(dir) == "es" && File.Exists(file)) ReadSids(new StreamReader(file, Encoding.UTF8), texts);
+            }
+            catch
+            {
+                // a partly read file still serves what it read
+            }
+            _texts = texts;
         }
 
         private static void Read(TextReader reader)
@@ -519,7 +557,7 @@ namespace Ro3Emu.Loc
             }
         }
 
-        private static void ReadSids(TextReader reader)
+        private static void ReadSids(TextReader reader, Dictionary<long, string> into)
         {
             using (reader)
             {
@@ -528,7 +566,7 @@ namespace Ro3Emu.Loc
                 {
                     int tab = line.IndexOf('\t');
                     if (tab <= 0 || line[0] == '#' || !long.TryParse(line.Substring(0, tab), out long sid)) continue;
-                    _sids[sid] = Unescape(line.Substring(tab + 1));
+                    into[sid] = Unescape(line.Substring(tab + 1));
                 }
             }
         }
