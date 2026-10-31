@@ -442,9 +442,10 @@ public static class GameDataExport
         loc.Write(outPath);
         options.Log?.Invoke($"loc_en.tsv: {loc.Count} entries ({loc.FromQueue} queue, {loc.FromTables} client tables, {loc.Ours} ours)");
         // Always written (header only without the tables): it is one of the TopFiles an up-to-date export has.
-        var sids = File.Exists(zhJson) && File.Exists(enJson) ? loc.SidEntries(zhJson, enJson) : [];
-        int sidCount = LocMapBuilder.WriteSids(sids, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!, SidMapFile));
-        options.Log?.Invoke($"{SidMapFile}: {sidCount} texts by id");
+        var rows = File.Exists(zhJson) && File.Exists(enJson) ? loc.SidRows(zhJson, enJson) : [];
+        var sentences = LocMapBuilder.Sentences(rows);
+        int sidCount = LocMapBuilder.WriteSids(rows.Select(r => (r.Sid, r.Text)), Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!, SidMapFile), sentences);
+        options.Log?.Invoke($"{SidMapFile}: {sidCount} texts by id, {sentences.Count} sentences");
         return loc;
     }
 }

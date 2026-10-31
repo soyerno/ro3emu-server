@@ -29,6 +29,11 @@ namespace Ro3Emu.Loc
         private static List<Template> _templates;
         private static Dictionary<long, string> _sids;
         private static Dictionary<long, string> _texts;
+        private static LocTemplates _sentences;
+        /// <summary>Finished English sentences already looked up (null: not one of ours).</summary>
+        private static readonly Dictionary<string, string> SentenceCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        /// <summary>The key of a sentence line in loc_sid_es.tsv (Ro3Emu.DataExport.LocMapBuilder.SentenceKey).</summary>
+        private const string SentenceKey = "en";
         private static readonly Dictionary<string, string> Derived = new Dictionary<string, string>(StringComparer.Ordinal);
         private static readonly HashSet<string> Misses = new HashSet<string>(StringComparer.Ordinal);
         private static string _dir;
@@ -335,7 +340,12 @@ namespace Ro3Emu.Loc
                     string suffix = trailing > 0 ? text.Substring(text.Length - trailing) : "";
                     return prefix + replaced + suffix;
                 }
-
+            }
+            // A whole sentence (an announcement) before its tagged parts: the parts alone would leave it half English.
+            string sentence = Sentence(text);
+            if (sentence != null) return sentence;
+            if (EnglishOverrides.Count != 0)
+            {
                 string tagged = TryTranslateTaggedOrPrefixed(text);
                 if (tagged != null) return tagged;
 
@@ -519,23 +529,54 @@ namespace Ro3Emu.Loc
 
         /// <summary>
         /// &lt;client&gt;/ro3emu/loc_sid_es.tsv ("sid\ttext", written by RO3Emu.exe): Spanish text that replaces a sid's own.
-        /// Read only while language.txt selects Spanish; in English the client's own text by id stays.
+        /// Read only while language.txt selects Spanish; in English the client's own text by id stays. Its "en" lines are
+        /// the same texts as finished English sentences (<see cref="Sentence"/>).
         /// </summary>
         private static void LoadTexts()
         {
             var texts = new Dictionary<long, string>();
+            var sentences = new LocTemplates();
             try
             {
                 string dir = _dir ?? ResolveRo3EmuDir();
                 string file = Path.Combine(dir, "loc_sid_es.tsv");
-                if (GetConfiguredLanguage(dir) == "es" && File.Exists(file)) ReadSids(new StreamReader(file, Encoding.UTF8), texts);
+                if (GetConfiguredLanguage(dir) == "es" && File.Exists(file)) ReadSids(new StreamReader(file, Encoding.UTF8), texts, sentences);
             }
             catch
             {
                 // a partly read file still serves what it read
             }
             _texts = texts;
+            _sentences = sentences;
         }
+
+        /// <summary>
+        /// A finished English sentence the client built from a Localization_en text without the hooked lookup by id (the
+        /// chat code fills an announcement's ChatConfig content id: SystemBoardCastMsgNtf), in Spanish; null otherwise.
+        /// A ${n} param that is itself an override (a map or boss name the server sent in English) is translated too.
+        /// </summary>
+        private static string Sentence(string text)
+        {
+            if (HasCjk(text)) return null;
+            try
+            {
+                lock (Gate)
+                {
+                    if (_map == null) Load();
+                    if (_sentences == null || _sentences.Count == 0) return null;
+                    if (SentenceCache.TryGetValue(text, out var cached)) return cached;
+                    string es = _sentences.Translate(text, Param);
+                    if (SentenceCache.Count < MaxCached) SentenceCache[text] = es;
+                    return es;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string Param(string value) => EnglishOverrides.TryGetValue(value.Trim(), out var es) ? es : null;
 
         private static void Read(TextReader reader)
         {
@@ -557,7 +598,8 @@ namespace Ro3Emu.Loc
             }
         }
 
-        private static void ReadSids(TextReader reader, Dictionary<long, string> into)
+        /// <summary>"sid\ttext" lines into <paramref name="into"/>; "en\tEnglish\tSpanish" lines into <paramref name="sentences"/>.</summary>
+        private static void ReadSids(TextReader reader, Dictionary<long, string> into, LocTemplates sentences = null)
         {
             using (reader)
             {
@@ -565,6 +607,12 @@ namespace Ro3Emu.Loc
                 while ((line = reader.ReadLine()) != null)
                 {
                     int tab = line.IndexOf('\t');
+                    if (sentences != null && tab == SentenceKey.Length && line.StartsWith(SentenceKey + "\t", StringComparison.Ordinal))
+                    {
+                        int second = line.IndexOf('\t', tab + 1);
+                        if (second > tab) sentences.Add(Unescape(line.Substring(tab + 1, second - tab - 1)), Unescape(line.Substring(second + 1)));
+                        continue;
+                    }
                     if (tab <= 0 || line[0] == '#' || !long.TryParse(line.Substring(0, tab), out long sid)) continue;
                     into[sid] = Unescape(line.Substring(tab + 1));
                 }
