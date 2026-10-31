@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Ro3Emu.Loc builds only against a client's own mscorlib; its client-free sentence matcher is compiled in here. -->
+    <Compile Include="..\..\src\Ro3Emu.Loc\LocTemplates.cs" Link="Loc\LocTemplates.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Ro3Emu.Setup\Ro3Emu.Setup.csproj" />
     <ProjectReference Include="..\..\src\Ro3Emu.DataExport\Ro3Emu.DataExport.csproj" />
   </ItemGroup>

@@ -7,7 +7,7 @@ namespace Ro3Emu.DataExport;
 /// <summary>
 /// Everything the server reads from the client, exported in one go from a client folder into a data folder:
 /// config/ (DataConfig, ComplexConfig and Localization_en tables), sceneeditor/, skills/, nav/, msgtable.tsv, plus
-/// loc_en.tsv (the English map for the client, see <see cref="LocMapBuilder"/>) and export.json (what was exported
+/// loc_en.tsv and loc_sid_es.tsv (the client's text maps, see <see cref="LocMapBuilder"/>) and export.json (what was exported
 /// from which client). Nothing in the client folder is written.
 /// - **Complete or flagged:** a table that fails to export is an error unless it is a known non-table module
 ///   (<see cref="ExpectedTableFailures"/>); any other failure is listed in the stamp and makes the export incomplete,
@@ -25,7 +25,7 @@ namespace Ro3Emu.DataExport;
 public static class GameDataExport
 {
     /// <summary>Bumped when the export's output changes, so RO3Emu.exe exports again after an update of itself.</summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 4;
 
     /// <summary>Client modules under the exported folders that are code, not tables: they never export, and that is fine.</summary>
     public static readonly IReadOnlySet<string> ExpectedTableFailures = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Lua_DBManager" };
@@ -126,7 +126,13 @@ public static class GameDataExport
         string? Quick = null, Dictionary<string, int>? Files = null, string[]? FailedTables = null);
 
     /// <summary>The single files an export writes besides <see cref="Folders"/>.</summary>
-    public static readonly string[] TopFiles = ["msgtable.tsv", "loc_en.tsv"];
+    public static readonly string[] TopFiles = ["msgtable.tsv", "loc_en.tsv", SidMapFile];
+
+    /// <summary>
+    /// The text-by-id map written next to loc_en.tsv (<see cref="LocMapBuilder.SidEntries"/>). Spanish: the merged
+    /// translations end with zz-es-full.tsv (zh -> es); Ro3Loc reads it only while language.txt selects Spanish.
+    /// </summary>
+    public const string SidMapFile = "loc_sid_es.tsv";
 
     /// <summary>Client script folders (and files) whose modules become exported tables: a chunk among them that does not
     /// decode is a missing table.</summary>
@@ -384,7 +390,8 @@ public static class GameDataExport
     /// <summary>
     /// The English map alone, without the rest of the export: what a player who joins someone else's server needs.
     /// Decodes only the two Localization chunks of <paramref name="clientDir"/>, so it takes seconds, and writes
-    /// <paramref name="path"/> exactly as <see cref="Run"/> writes data/loc_en.tsv. Returns the entry count.
+    /// <paramref name="path"/> exactly as <see cref="Run"/> writes data/loc_en.tsv, and <see cref="SidMapFile"/> next to it.
+    /// Returns the entry count of loc_en.tsv.
     /// </summary>
     public static int WriteLocMap(string clientDir, string path, Options? options = null)
     {
@@ -414,8 +421,10 @@ public static class GameDataExport
             if (!File.Exists(zh) || !File.Exists(en)) throw new ExportException("The game's text tables could not be read: " + string.Join("; ", errors));
             var staged = Path.Combine(work, "loc_en.tsv");
             int count = BuildLocMap(zh, en, staged, options).Count;
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
+            Directory.CreateDirectory(dir);
             File.Move(staged, path, overwrite: true);
+            File.Move(Path.Combine(work, SidMapFile), Path.Combine(dir, SidMapFile), overwrite: true);
             return count;
         }
         finally
@@ -432,6 +441,11 @@ public static class GameDataExport
         loc.AddTranslations(options.Translations);
         loc.Write(outPath);
         options.Log?.Invoke($"loc_en.tsv: {loc.Count} entries ({loc.FromQueue} queue, {loc.FromTables} client tables, {loc.Ours} ours)");
+        // Always written (header only without the tables): it is one of the TopFiles an up-to-date export has.
+        var rows = File.Exists(zhJson) && File.Exists(enJson) ? loc.SidRows(zhJson, enJson) : [];
+        var sentences = LocMapBuilder.Sentences(rows);
+        int sidCount = LocMapBuilder.WriteSids(rows.Select(r => (r.Sid, r.Text)), Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!, SidMapFile), sentences);
+        options.Log?.Invoke($"{SidMapFile}: {sidCount} texts by id, {sentences.Count} sentences");
         return loc;
     }
 }
